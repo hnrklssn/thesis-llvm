@@ -24,6 +24,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
@@ -177,8 +178,79 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key,
   else if (isa<Constant>(V)) {
     raw_string_ostream OS(Val);
     V->printAsOperand(OS, /*PrintType=*/false);
-  } else if (auto *I = dyn_cast<Instruction>(V))
-    Val = I->getOpcodeName();
+  } else if (auto *I = dyn_cast<CallInst>(V)) {
+	  if(auto *F = I->getCalledFunction()) {
+		    errs() << "\033[1;36m our function name: " << F->getName() << "\n\n";
+		    errs() << "\033[0m\n";
+	    Val = F->getName();
+	  } else if(I->hasName()) {
+		    errs() << "\033[1;35m our value name: " << I->getName() << "\n\n";
+		    errs() << "\033[0m\n";
+	    Val = I->getName();
+	  } else {
+		Val = "value without name";
+	  }
+  } else if(auto *I = dyn_cast<Instruction>(V)) {
+	  if(I->hasMetadata()) {
+	    std::string debug_info;
+	    raw_string_ostream ss(debug_info);
+	    //ss << "'";
+	    SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
+	    I->getAllMetadata(MDs);
+	    for (auto &MD : MDs) {
+		    if (MDNode *N = MD.second) { // många MDTuple, vad innebär det?
+			    N->printAsOperand(ss, I->getModule());
+			    //ss << "\n";
+			    for (auto &OP : N->operands()) {
+				    ss << "debug info op ";
+				    OP->print(ss, I->getModule(), false);
+				    //ss << "\n";
+			    }
+		    }
+	    }
+	    //ss << "'";
+	    ss << " opcodename: " << I->getOpcodeName() << "  valuename: " << I->getName();
+	    Val = ss.str();
+	  } else {
+      		Val = I->getOpcodeName();
+	  }
+  } else {
+	 Val = V->getName();
+  }
+  /*} else if (auto *I = dyn_cast<Instruction>(V)) {
+    if (I->hasMetadata()) {
+	    SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
+	    I->getAllMetadata(MDs);
+	    for (auto &MD : MDs) {
+		    if (DINode *N = dyn_cast<DINode>(MD.second)) { // många MDTuple, vad innebär det?
+		    errs() << "\033[1;31m our output: \n\n";
+			    N->printAsOperand(errs(), I->getModule());
+			    errs() << "\n";
+			    for (auto &OP : N->operands()) {
+				    errs() << "\t debug info op ";
+				    OP->print(errs(), I->getModule(), false);
+				    errs() << "\n";
+			    }
+		    errs() << "\033[0m\n";
+		    } else if (DIExpression *N = dyn_cast<DIExpression>(MD.second)) {
+		    errs() << "\033[0;33m our output: \n\n";
+			    N->printAsOperand(errs(), I->getModule());
+			    errs() << "\n";
+			    for (auto &OP : N->operands()) {
+				    errs() << "\t debug info op ";
+				    OP->print(errs(), I->getModule(), false);
+				    errs() << "\n";
+			    }
+		    errs() << "\033[0m\n";
+		    }
+	    }
+	    Val = "has_metadata_lol";
+    } else {
+      Val = I->getOpcodeName();
+    }
+  } else {
+      Val = "asdf no name";
+    }*/
 }
 
 DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key, const Type *T)
