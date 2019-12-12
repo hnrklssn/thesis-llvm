@@ -31,6 +31,11 @@ namespace {
       ++HelloCounter;
       errs() << "Hello: ";
       errs().write_escaped(F.getName()) << '\n';
+      for(auto &BB : F.getBasicBlockList()) {
+	      for(auto &I : BB.getInstList()) {
+		      errs() << I << "\n";
+	      }
+      }
       return false;
     }
   };

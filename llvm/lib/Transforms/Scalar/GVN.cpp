@@ -855,8 +855,13 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
   User *OtherAccess = nullptr;
 
   OptimizationRemarkMissed R(DEBUG_TYPE, "LoadClobbered", LI);
-  R << "load of type " << NV("Type", LI->getType()) << " not eliminated"
-    << setExtraArgs();
+  R << "load " << NV("loadinst", LI) << " of pointer " << NV("pointer", LI->getPointerOperand()) << " of type " << NV("Type", LI->getType()) << " not eliminated";
+  int i = 0;
+  for (auto *U2 : LI->users()) {
+	  errs() << "use " << i << "\n";
+	  R << NV("use" + std::to_string(i++), U2);
+  }
+  R << setExtraArgs();
 
   for (auto *U : LI->getPointerOperand()->users())
     if (U != LI && (isa<LoadInst>(U) || isa<StoreInst>(U)) &&
