@@ -143,11 +143,11 @@ namespace {
     APInt ByteOffset(DL.getIndexSizeInBits(GEP->getPointerAddressSpace()), 0);
     APInt EIGHT(ByteOffset);
     EIGHT = 8;
+    auto OP = GEP->getPointerOperand();
+    errs() << "operand: " << *OP << "\n";
     if (GEP->accumulateConstantOffset(DL, ByteOffset)) {
       APInt BitOffset = ByteOffset * EIGHT;
       errs() << "offset: " << BitOffset  << "\n";
-      auto OP = GEP->getPointerOperand();
-      errs() << "operand: " << *OP << "\n";
       if (auto LI = dyn_cast<LoadInst>(OP)) {
         // This means our pointer originated in the dereference of another pointer
         // Use that pointer to name this pointer
@@ -179,7 +179,11 @@ namespace {
         return "unknown-dbg-variable-intrinsic";
       }
     } else {
-      return "handle-non-const-offset-pls"; // FIXME handle array indexing
+      std::string arrayName = getOriginalName(OP);
+      auto indexOP = GEP->getOperand(1);
+      errs() << "index operand: " << *indexOP << "\n";
+      std::string indexName = getOriginalName(indexOP);
+      return arrayName + "["+indexName+"]";
     }
   }
 
@@ -189,7 +193,12 @@ namespace {
       return getOriginalPointerName(GEP, FinalType);
     }
     DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
-    if (!DVI) return "tmp-null";
+    if (!DVI) {
+      if (auto UI = dyn_cast<UnaryInstruction>(V)) { // most unary instructions don't really alter the value that much
+        return getOriginalName(UI->getOperand(0)); // TODO Figure out if this could ever cause an infinite loop in welformed programs. My guess is no.
+      }
+      return "tmp-null";
+    }
     return getNameFromDbgVariableIntrinsic(DVI);
   }
 
