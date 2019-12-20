@@ -150,10 +150,10 @@ namespace {
       errs() << "offset: " << BitOffset  << "\n";
       if (auto LI = dyn_cast<LoadInst>(OP)) {
         // This means our pointer originated in the dereference of another pointer
-        // Use that pointer to name this pointer
+        // Use that pointer to name this pointer, and make it return metadata for accessing debug symbols for our ptr
         DIType *T = nullptr;
         std::string ptrName = getOriginalName(LI->getPointerOperand(), &T);
-        if (!T) return ptrName + "->{unknownField}";
+        if (!T) return ptrName + "->{unknownField}"; // FIXME handle constant indices
         errs() << "final type: " << *T << "\n";
         if (auto PT = dyn_cast<DIDerivedType>(T)) {
           assert(PT->getTag() == dwarf::DW_TAG_pointer_type);
@@ -162,9 +162,9 @@ namespace {
         return ptrName + "->{invalid_pointer_type}";
       }
       DbgVariableIntrinsic * DVI = getSingleDbgUser(OP);
-      errs() << DVI << "iiiiiiii\n";
+      errs() << DVI << "\n";
       if (!DVI) {
-        // The code was compiled without debug info
+        // The code was compiled without debug info, or was optimised to the point where it's no longer accessible
         return "insert-some-fallback-here"; // FIXME handle gracefully (or return null potentially)
       }
       if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
@@ -180,7 +180,9 @@ namespace {
       }
     } else {
       std::string arrayName = getOriginalName(OP);
-      auto indexOP = GEP->getOperand(1);
+      auto indexOP = GEP->getOperand(1); // TODO investigate if non-const indexing ever has multiple index operands
+                                         // multidimensional arrays are handled already since that is covered by
+                                         // pointer from pointer-deref
       errs() << "index operand: " << *indexOP << "\n";
       std::string indexName = getOriginalName(indexOP);
       return arrayName + "["+indexName+"]";
@@ -196,6 +198,9 @@ namespace {
     if (!DVI) {
       if (auto UI = dyn_cast<UnaryInstruction>(V)) { // most unary instructions don't really alter the value that much
         return getOriginalName(UI->getOperand(0)); // TODO Figure out if this could ever cause an infinite loop in welformed programs. My guess is no.
+      }
+      if (auto C = dyn_cast<ConstantInt>(V)) {
+        return std::to_string(C->getZExtValue());
       }
       return "tmp-null";
     }
