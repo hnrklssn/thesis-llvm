@@ -52,18 +52,13 @@ namespace {
     }
     return NULL;
   }
-  std::string getFragmentTypeName(DIType *T, int64_t Offset) {
+  std::string getFragmentTypeName(DIType *T, int64_t Offset, DIType **FinalType, std::string Sep = ".") {
     if (auto Comp = dyn_cast<DICompositeType>(T)) { // FIXME maybe while instead?
-      errs() << "composite:\n";
-      Comp->dump();
       DIDerivedType *tmpT = nullptr;
       for (auto E : Comp->getElements()) {
-        errs() << "element:\n";
         E->dump();
         if(auto E2 = dyn_cast<DIDerivedType>(E)) {
-          errs() << "ddt\n";
           int64_t O2 = E2->getOffsetInBits();
-          errs() << "offsssssseeeeeeeeettttt " << O2 << "\n";
           if (O2 > Offset) {
             break;
           }
@@ -73,27 +68,29 @@ namespace {
         }
       }
       if (!tmpT)
-        return "no-exact-offset-match";
-      errs() << "tmpT found:\n";
-      tmpT->dump();
-      if(tmpT->getBaseType()) tmpT->getBaseType()->dump();
-      return "." + tmpT->getName().str() + getFragmentTypeName(tmpT, Offset - tmpT->getOffsetInBits());
+        return "no-elements-in-struct?";
+      return Sep + tmpT->getName().str() + getFragmentTypeName(tmpT, Offset - tmpT->getOffsetInBits(), FinalType);
     } else if (auto Derived = dyn_cast<DIDerivedType>(T)) {
-      errs() << "derived:\n";
-      if (!Derived->getBaseType()) return ".[" + std::to_string(Offset) + "]";
-      return getFragmentTypeName(Derived->getBaseType(), Offset);
+      if (FinalType) *FinalType = Derived;
+      if (!Derived->getBaseType()) return "[" + std::to_string(Offset) + "]";
+      if (Derived->getTag() == dwarf::DW_TAG_pointer_type) {
+        if (Offset == 0)
+          return ""; // traversing pointer is not meaningful in this context
+        return "[" + std::to_string(Offset) + "]"; // FIXME print index in terms of elements adjusted for size
+      }
+      return getFragmentTypeName(Derived->getBaseType(), Offset, FinalType);
     }
-    return "";T->getName().str();//"not-comp-type";
+    return ""; // This is the end of the chain, the type name is no longer part of the variable name
   }
 
-  std::string getNameFromDbgValue(DbgValueInst *VI) {
+  std::string getNameFromDbgVariableIntrinsic(DbgVariableIntrinsic *VI) {
     DILocalVariable *Val = VI->getVariable();
     DIExpression *Expr = VI->getExpression();
     if(!Expr->isFragment()) {
       return Val->getName();
     }
     int64_t Offset = -1;
-    if (Expr->extractIfOffset(Offset)) { // 100% buggigt???
+    if (Expr->extractIfOffset(Offset)) { // FIXME extractIfOffset seems broken. Workaround below for now.
       return Val->getName();
     }
 
@@ -103,7 +100,7 @@ namespace {
     }
     errs() << "original offset " << Offset << " num " << Expr->getNumElements() << " " << FIO->SizeInBits << " " << FIO->OffsetInBits << "\n";
     DIType *Type = Val->getType();
-    if (auto Derived = dyn_cast<DIDerivedType>(Type)) { // FIXME maybe while instead?
+    if (auto Derived = dyn_cast<DIDerivedType>(Type)) { // FIXME this needs more thorough testing
       errs() << "derived: " << Derived->getOffsetInBits() << "\n";
       Derived->dump();
       Type = Derived->getBaseType();
@@ -112,29 +109,15 @@ namespace {
       Type->dump();
     }
 
-    if (auto Comp = dyn_cast<DICompositeType>(Type)) { // FIXME maybe while instead?
+    if (auto Comp = dyn_cast<DICompositeType>(Type)) {
       errs() << "composite:\n";
       Comp->dump();
-      errs() << "base2:\n";
-      if(Comp->getBaseType())
-        Comp->getBaseType()->dump();
-      for (auto E : Comp->getElements()) {
-        errs() << "element:\n";
-        E->dump();
-        if(auto E2 = dyn_cast<DIDerivedType>(E)) {
-          errs() << "ddt\n";
-          int64_t O2 = E2->getOffsetInBits();
-          errs() << "offsssssseeeeeeeeettttt " << O2 << "\n";
-          if (O2 == Offset)
-            return Val->getName().str() + "." + E2->getName().str();
-        }
-
-      }
+      return getFragmentTypeName(Comp, Offset, nullptr);
     }
     return "lol-hej";
   }
 
-  DbgVariableIntrinsic* getSingleDbgUser(Value *V) {
+  DbgVariableIntrinsic* getSingleDbgUser(Value *V) { // TODO look into when a value can have multiple dbg intrinsic users
     SmallVector<DbgVariableIntrinsic *, 4> DbgValues;
     findDbgUsers(DbgValues, V);
     DbgVariableIntrinsic * DVI = nullptr;
@@ -149,8 +132,9 @@ namespace {
     }
     return DVI;
   }
+  std::string getOriginalName(Value* V, DIType **FinalType = nullptr);
 
-  std::string getOriginalPointerName(GetElementPtrInst *GEP) {
+  std::string getOriginalPointerName(GetElementPtrInst *GEP, DIType **FinalType = nullptr) {
     errs() << "GEP!\n";
     GEP->dump();
     Function *F = GEP->getParent()->getParent();
@@ -164,38 +148,49 @@ namespace {
       errs() << "offset: " << BitOffset  << "\n";
       auto OP = GEP->getPointerOperand();
       errs() << "operand: " << *OP << "\n";
+      if (auto LI = dyn_cast<LoadInst>(OP)) {
+        // This means our pointer originated in the dereference of another pointer
+        // Use that pointer to name this pointer
+        DIType *T = nullptr;
+        std::string ptrName = getOriginalName(LI->getPointerOperand(), &T);
+        if (!T) return ptrName + "->{unknownField}";
+        errs() << "final type: " << *T << "\n";
+        if (auto PT = dyn_cast<DIDerivedType>(T)) {
+          assert(PT->getTag() == dwarf::DW_TAG_pointer_type);
+          return ptrName + getFragmentTypeName(PT->getBaseType(), BitOffset.getSExtValue(), FinalType, "->");
+        }
+        return ptrName + "->{invalid_pointer_type}";
+      }
       DbgVariableIntrinsic * DVI = getSingleDbgUser(OP);
       errs() << DVI << "iiiiiiii\n";
-      if (!DVI) return "insert-some-fallback-here"; // FIXME this will happen e.g. if compiled without debug info
+      if (!DVI) {
+        // The code was compiled without debug info
+        return "insert-some-fallback-here"; // FIXME handle gracefully (or return null potentially)
+      }
       if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
         assert("this should not happen");
       } else if(auto Decl = dyn_cast<DbgDeclareInst>(DVI)) {
-        errs() << "decl-temp3\n";
         auto Var = Decl->getVariable();
         auto Type = Var->getType();
         Type->dump();
         Var->dump();
-        return Var->getName().str() + getFragmentTypeName(Type, BitOffset.getSExtValue());
+        return Var->getName().str() + getFragmentTypeName(Type, BitOffset.getSExtValue(), FinalType);
       } else {
-        return "eeeeeeeeeeeeeeee";
+        return "unknown-dbg-variable-intrinsic";
       }
     } else {
-      return "handle-non-const-offset-pls";
+      return "handle-non-const-offset-pls"; // FIXME handle array indexing
     }
   }
 
-  std::string getOriginalName(Value* V) {
+  std::string getOriginalName(Value* V, DIType **FinalType) {
     // TODO handle globals as well
-
+    if (auto GEP = dyn_cast<GetElementPtrInst>(V)) {
+      return getOriginalPointerName(GEP, FinalType);
+    }
     DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
     if (!DVI) return "tmp-null";
-    if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
-      return getNameFromDbgValue(Val);
-    } else if(auto Decl = dyn_cast<DbgDeclareInst>(DVI)) {
-      return "decl-temp";
-    }
-
-    return "no-match-tmp";
+    return getNameFromDbgVariableIntrinsic(DVI);
   }
 
   void printIntrinsic(IntrinsicInst *I) {
