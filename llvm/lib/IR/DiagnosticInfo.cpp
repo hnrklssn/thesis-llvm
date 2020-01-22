@@ -180,12 +180,12 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key,
     V->printAsOperand(OS, /*PrintType=*/false);
   } else if (auto *I = dyn_cast<CallInst>(V)) {
 	  if(auto *F = I->getCalledFunction()) {
-		    errs() << "\033[1;36m our function name: " << F->getName() << "\n\n";
-		    errs() << "\033[0m\n";
+      LLVM_DEBUG(errs() << "\033[1;36m our function name: " << F->getName() << "\n\n");
+		  LLVM_DEBUG(errs() << "\033[0m\n");
 	    Val = F->getName();
 	  } else if(I->hasName()) {
-		    errs() << "\033[1;35m our value name: " << I->getName() << "\n\n";
-		    errs() << "\033[0m\n";
+      LLVM_DEBUG(errs() << "\033[1;35m our value name: " << I->getName() << "\n\n");
+		  LLVM_DEBUG(errs() << "\033[0m\n");
 	    Val = I->getName();
 	  } else {
 		Val = "value without name";
