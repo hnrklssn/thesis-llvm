@@ -5433,13 +5433,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fapple-pragma-pack");
 
   // Remarks can be enabled with any of the `-f.*optimization-record.*` flags.
-  if (Args.hasFlag(options::OPT_fsave_optimization_record,
-                   options::OPT_foptimization_record_file_EQ,
-                   options::OPT_fno_save_optimization_record, false) ||
-      Args.hasFlag(options::OPT_fsave_optimization_record_EQ,
-                   options::OPT_fno_save_optimization_record, false) ||
-      Args.hasFlag(options::OPT_foptimization_record_passes_EQ,
-                   options::OPT_fno_save_optimization_record, false)) {
+  if (true) {
     CmdArgs.push_back("-opt-record-file");
 
     const Arg *A = Args.getLastArg(options::OPT_foptimization_record_file_EQ);
