@@ -85,14 +85,20 @@ namespace {
   }
 
   std::string getFragmentTypeName(DIType *T, int64_t *Offsets_begin, int64_t *Offsets_end, DIType **FinalType, std::string Sep = ".") {
+    int64_t Offset = -1;
     LLVM_DEBUG(errs() << "getFragmentTypeName: " << *T << "\n");
     if (Offsets_begin == Offsets_end) {
+      LLVM_DEBUG(errs() << "offsets_begin == offsets_end \n");
+    } else {
+      Offset = *Offsets_begin;
+    }
+    // derived types don' count, so we still haven't reached the final type if we encounter one of those
+    if (Offsets_begin == Offsets_end  && (!isa<DIDerivedType>(T) || T->getTag() == dwarf::DW_TAG_pointer_type)) {
       if(FinalType) *FinalType = T;
       return ""; //Sep + T->getName().str();
     }
-    int64_t Offset = *Offsets_begin;
     LLVM_DEBUG(errs() << "getFragmentTypeName offset: " << Offset << "\n");
-    if (auto Comp = dyn_cast<DICompositeType>(T)) { // FIXME maybe while instead?
+    if (auto Comp = dyn_cast<DICompositeType>(T)) {
       auto elements = Comp->getElements();
       if (Offset >= elements.size()) {
         return "not-enough-elements-in-struct?";
@@ -105,7 +111,11 @@ namespace {
       }
     } else if (auto Derived = dyn_cast<DIDerivedType>(T)) {
       if (FinalType) *FinalType = Derived;
-      if (!Derived->getBaseType()) return "[" + std::to_string(Offset) + "]";
+      if (!Derived->getBaseType()) {
+        if (Offsets_begin != Offsets_end)
+          return "[" + std::to_string(Offset) + "]";
+        return "";
+      }
       if (Derived->getTag() == dwarf::DW_TAG_pointer_type) {
         if (Offset == 0)
           return ""; // traversing pointer is not meaningful in this context
@@ -184,6 +194,25 @@ namespace {
   }
   std::string getOriginalName(Value* V, DIType **FinalType = nullptr);
 
+  std::string getOriginalRelativePointerName(Value *V, SmallVectorImpl<int64_t> &Indices, DIType **FinalType = nullptr) {
+    // Use the value V to name this pointer prefix, and make it return metadata for accessing debug symbols for our pointer
+    DIType *T = nullptr;
+    LLVM_DEBUG(errs() << "getting pointer prefix for " << *V << "\n");
+    std::string ptrName = getOriginalName(V, &T);
+    LLVM_DEBUG(errs() << "prefix: " << ptrName << "\n");
+    if (!T) return ptrName + "->{unknownField}"; // FIXME handle constant indices
+    LLVM_DEBUG(errs() << "final type: " << *T << "\n");
+    if (auto PT = dyn_cast<DIDerivedType>(T)) {
+      std::string Sep = ".";
+      if (PT->getTag() == dwarf::DW_TAG_pointer_type) Sep = "->";
+      return ptrName + getFragmentTypeName(PT->getBaseType(), Indices.begin(), Indices.end(), FinalType, Sep);
+    } else {
+      LLVM_DEBUG(errs() << "non derived type: " << *T << "\n");
+      return ptrName + getFragmentTypeName(T, Indices.begin(), Indices.end(), FinalType);
+    }
+    return ptrName + "->{invalid_pointer_type}";
+  }
+
   std::string getOriginalPointerName(GetElementPtrInst *GEP, DIType **FinalType = nullptr) {
     LLVM_DEBUG(errs() << "GEP!\n");
     LLVM_DEBUG(GEP->dump());
@@ -196,44 +225,19 @@ namespace {
     auto OP = GEP->getPointerOperand();
     LLVM_DEBUG(errs() << "operand: " << *OP << "\n");
     if (GEP->accumulateConstantOffset(DL, ByteOffset)) {
+      LLVM_DEBUG(errs() << "++++1+++++\n");
       APInt BitOffset = ByteOffset * EIGHT;
       LLVM_DEBUG(errs() << "offset: " << BitOffset  << "\n");
       SmallVector<int64_t, 8> Indices;
       getConstOffsets(GEP->idx_begin() + 1, GEP->idx_end(), Indices); // skip first zero index
       if (auto LI = dyn_cast<LoadInst>(OP)) {
+        LLVM_DEBUG(errs() << "++++2+++++\n");
         // This means our pointer originated in the dereference of another pointer
-        // Use that pointer to name this pointer, and make it return metadata for accessing debug symbols for our ptr
-        DIType *T = nullptr;
-        std::string ptrName = getOriginalName(LI->getPointerOperand(), &T);
-        if (!T) return ptrName + "->{unknownField}"; // FIXME handle constant indices
-        LLVM_DEBUG(errs() << "final type: " << *T << "\n");
-        if (auto PT = dyn_cast<DIDerivedType>(T)) {
-          assert(PT->getTag() == dwarf::DW_TAG_pointer_type);
-          return ptrName + getFragmentTypeName(PT->getBaseType(), Indices.begin(), Indices.end(), FinalType, "->");
-        }
-        return ptrName + "->{invalid_pointer_type}";
+        return getOriginalRelativePointerName(LI->getPointerOperand(), Indices, FinalType);
       } else if (auto GEP2 = dyn_cast<GetElementPtrInst>(OP)) {
-        LLVM_DEBUG(errs() << "isa GEP\n");
-        SmallVector<Value *, 8> Ops(GEP->op_begin(), GEP->op_end());
-        LLVM_DEBUG(errs() << "ops size " << Ops.size() << "\n");
-        if (!all_of(Ops, [](Value *V) { return isa<Constant>(V); })) {
-          LLVM_DEBUG(errs() << "not all constant\n");
-        }
-        Value *simple = SimplifyInstruction(GEP, DL);
-        if (simple) {
-          LLVM_DEBUG(errs() << "simplified\n");
-          return getOriginalName(simple, FinalType);
-        }
-        DIType *T = nullptr;
-        std::string ptrName = getOriginalName(GEP2, &T);
-        if (!T) return ptrName + "->{unknownField}"; // FIXME handle constant indices
-        LLVM_DEBUG(errs() << "final type: " << *T << "\n");
-        if (auto PT = dyn_cast<DIDerivedType>(T)) {
-          std::string Sep = ".";
-          if (PT->getTag() == dwarf::DW_TAG_pointer_type) Sep = "->";
-          return ptrName + getFragmentTypeName(PT->getBaseType(), Indices.begin(), Indices.end(), FinalType, Sep);
-        }
-        return ptrName + "->{invalid_pointer_type}";
+        LLVM_DEBUG(errs() << "++++3+++++\n");
+        // This means our pointer is some linear offset of another pointer, e.g. a subfield of a struct, relative to the pointer to the base of the struct
+        return getOriginalRelativePointerName(GEP2, Indices, FinalType);
       }
       DbgVariableIntrinsic * DVI = getSingleDbgUser(OP);
       LLVM_DEBUG(errs() << DVI << "\n");
@@ -253,6 +257,7 @@ namespace {
         return "unknown-dbg-variable-intrinsic";
       }
     } else {
+      LLVM_DEBUG(errs() << "++++4+++++\n");
       std::string arrayName = getOriginalName(OP);
       auto indexOP = GEP->getOperand(1); // TODO investigate if non-const indexing ever has multiple index operands
                                          // multidimensional arrays are handled already since that is covered by
