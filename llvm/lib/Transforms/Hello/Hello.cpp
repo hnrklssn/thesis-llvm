@@ -85,9 +85,31 @@ namespace {
     return ""; // This is the end of the chain, the type name is no longer part of the variable name
   }
 
+  int pointerDepth(DIType *T) {
+    int i = 0;
+    while(T && T->getTag() == dwarf::DW_TAG_pointer_type) {
+      i++;
+      if(auto PT = dyn_cast<DIDerivedType>(T)) {
+        T = PT->getBaseType();
+      } else return i;
+    }
+    return i;
+  }
+
   std::string getFragmentTypeName(DIType *T, int64_t *Offsets_begin, int64_t *Offsets_end, DIType **FinalType, std::string Sep = ".") {
     int64_t Offset = -1;
     LLVM_DEBUG(errs() << "getFragmentTypeName: " << *T << "\n");
+    if (auto Derived = dyn_cast<DIDerivedType>(T)) {
+      LLVM_DEBUG(errs() << "pointer depth: " << pointerDepth(Derived) << "\n");
+      if(Derived->getBaseType()) {
+        LLVM_DEBUG(errs() << "basetype: " << *Derived->getBaseType() << " " << Derived->getBaseType()->getName() << "\n");
+        LLVM_DEBUG(errs() << "base pointer depth: " << pointerDepth(Derived->getBaseType()) << "\n");
+        LLVM_DEBUG(Derived->getBaseType()->dump());
+        LLVM_DEBUG(Derived->getBaseType()->printAsOperand(errs()));
+      } else {
+        LLVM_DEBUG(errs() << "no basetype\n");
+      }
+    }
     if (Offsets_begin == Offsets_end) {
       LLVM_DEBUG(errs() << "offsets_begin == offsets_end \n");
     } else {
@@ -119,17 +141,17 @@ namespace {
       }
       if (Derived->getTag() == dwarf::DW_TAG_pointer_type) {
         if (Offset == 0)
-          return ""; // TODO: decide whether to explicitly zero index
+          return "";
         return "[" + std::to_string(Offset) + "]";
       }
       // transparently step through derived type without iterating offset
-      return getFragmentTypeName(Derived->getBaseType(), Offsets_begin, Offsets_end, FinalType);
+      return getFragmentTypeName(Derived->getBaseType(), Offsets_begin, Offsets_end, FinalType, Sep);
     }
     return ""; // This is the end of the chain, the type name is no longer part of the variable name
   }
 
   // store uses as int64_t in a vector in reverse order
-  void getConstOffsets(Use *Offsets_begin, Use *Offsets_end, SmallVectorImpl<int64_t> &vec) {
+  bool getConstOffsets(Use *Offsets_begin, Use *Offsets_end, SmallVectorImpl<int64_t> &vec) {
     while (Offsets_begin < Offsets_end) {
       Value *Offset = Offsets_begin->get();
       if (auto ConstOffset = dyn_cast<Constant>(Offset)) {
@@ -138,10 +160,11 @@ namespace {
       } else {
         errs() << "non const offsets? should not happen\n";
         vec.clear();
-        return;
+        return false;
       }
       Offsets_begin++;
     }
+    return true;
   }
 
   std::string getNameFromDbgVariableIntrinsic(DbgVariableIntrinsic *VI, DIType **FinalType = nullptr) {
@@ -179,15 +202,33 @@ namespace {
     }
     return "lol-hej";
   }
+  void testFindDbgUsers(SmallVectorImpl<DbgVariableIntrinsic *> &DbgUsers,
+                              Value *V) {
+    // This function is hot. Check whether the value has any metadata to avoid a
+    // DenseMap lookup.
+    if (!V->isUsedByMetadata()) {
+      return;
+    }
+    if (auto *L = ValueAsMetadata::getIfExists(V)) { // used to be LocalAsMetadata, but that will crash if passed a constant value
+      if (auto *MDV = MetadataAsValue::getIfExists(V->getContext(), L)) {
+        for (User *U : MDV->users()) {
+          if (DbgVariableIntrinsic *DII = dyn_cast<DbgVariableIntrinsic>(U))
+            DbgUsers.push_back(DII);
+        }
+      }
+    }
+ }
 
   DbgVariableIntrinsic* getSingleDbgUser(Value *V) { // TODO look into when a value can have multiple dbg intrinsic users
     SmallVector<DbgVariableIntrinsic *, 4> DbgValues;
-    findDbgUsers(DbgValues, V);
+    testFindDbgUsers(DbgValues, V); // TODO upstream fix
+    //findDbgUsers(DbgValues, V);
     DbgVariableIntrinsic * DVI = nullptr;
     DbgValueInst *crash = nullptr;
     bool single = true;
     for (auto &VI : DbgValues) {
       LLVM_DEBUG(VI->dump());
+      if (DVI && VI->isIdenticalTo(DVI)) continue; // intrinsics can be duplicated
       DVI = VI;
       assert(single && "more than one dbg intrinsic for value");
       if(!single) { return (DbgVariableIntrinsic*)crash->getVariable(); }
@@ -197,81 +238,89 @@ namespace {
   }
   std::string getOriginalName(Value* V, DIType **FinalType = nullptr);
 
-  std::string getOriginalRelativePointerName(Value *V, SmallVectorImpl<int64_t> &Indices, DIType **FinalType = nullptr) {
+  // TODO check which string type is appropriate here
+  std::string getOriginalRelativePointerName(Value *V, std::string &ArrayIdx, SmallVectorImpl<int64_t> &StructIndices, DIType **FinalType = nullptr) {
     // Use the value V to name this pointer prefix, and make it return metadata for accessing debug symbols for our pointer
     DIType *T = nullptr;
     LLVM_DEBUG(errs() << "getting pointer prefix for " << *V << "\n");
     std::string ptrName = getOriginalName(V, &T);
-    LLVM_DEBUG(errs() << "prefix: " << ptrName << "\n");
+    LLVM_DEBUG(errs() << "prefix: " << ptrName << " arrayidx: " << ArrayIdx << "\n");
     if (!T) return ptrName + "->{unknownField}";
-    LLVM_DEBUG(errs() << "final type: " << *T << "\n");
+    LLVM_DEBUG(errs() << "final type: " << *T << " for " << *V << "\n");
+    LLVM_DEBUG(errs() << "pointer depth: " << pointerDepth(T) << "\n");
     if (auto PT = dyn_cast<DIDerivedType>(T)) {
       std::string Sep = ".";
-      std::string ArrayIdx = "";
-      if (PT->getTag() == dwarf::DW_TAG_pointer_type) Sep = "->";
-      if (Indices[0] != 0) ArrayIdx = "[" + std::to_string(Indices[0]) + "]";
-      return ptrName  + ArrayIdx + getFragmentTypeName(PT->getBaseType(), Indices.begin() + 1, Indices.end(), FinalType, Sep);
-    } else {
-      LLVM_DEBUG(errs() << "non derived type: " << *T << "\n");
-      return ptrName + getFragmentTypeName(T, Indices.begin() + 1, Indices.end(), FinalType);
+      if (ArrayIdx.empty() && PT->getTag() == dwarf::DW_TAG_pointer_type) Sep = "->"; // if explicit array indexing, dereference is already done
+      return ptrName + ArrayIdx + getFragmentTypeName(PT->getBaseType(), StructIndices.begin(), StructIndices.end(), FinalType, Sep);
     }
-    return ptrName + "->{invalid_pointer_type}";
+    LLVM_DEBUG(errs() << "non derived type: " << *T << "\n");
+    return ptrName + ArrayIdx + getFragmentTypeName(T, StructIndices.begin(), StructIndices.end(), FinalType);
   }
 
+  /**
+   * This function sets FinalType to the type of the value when dereferenced due to DIDerivedType pointer types
+   * not always being available for subfields. If FinalType is needed, be aware that this is inconsistent with other similar functions.
+   */
   std::string getOriginalPointerName(GetElementPtrInst *GEP, DIType **FinalType = nullptr) {
     LLVM_DEBUG(errs() << "GEP!\n");
     LLVM_DEBUG(GEP->dump());
     auto OP = GEP->getPointerOperand();
     LLVM_DEBUG(errs() << "operand: " << *OP << "\n");
-    if (GEP->hasAllConstantIndices()) {
-      SmallVector<int64_t, 8> Indices;
-      getConstOffsets(GEP->idx_begin(), GEP->idx_end(), Indices); // don't skip first offset, it may do array indexing
-      if (auto LI = dyn_cast<LoadInst>(OP)) {
-        // This means our pointer originated in the dereference of another pointer
-        return getOriginalRelativePointerName(LI->getPointerOperand(), Indices, FinalType);
-      } else if (auto GEP2 = dyn_cast<GetElementPtrInst>(OP)) {
-        // This means our pointer is some linear offset of another pointer, e.g. a subfield of a struct, relative to the pointer to the base of the struct
-        return getOriginalRelativePointerName(GEP2, Indices, FinalType);
-      }
-      DbgVariableIntrinsic * DVI = getSingleDbgUser(OP);
-      LLVM_DEBUG(errs() << DVI << "\n");
-      if (!DVI) {
-        // The code was compiled without debug info, or was optimised to the point where it's no longer accessible
-        return "insert-some-fallback-here"; // FIXME handle gracefully (or return null potentially)
-      }
-      if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
-        assert("this should not happen");
-      } else if(auto Decl = dyn_cast<DbgDeclareInst>(DVI)) {
-        auto Var = Decl->getVariable();
-        auto Type = Var->getType();
-        LLVM_DEBUG(Type->dump());
-        LLVM_DEBUG(Var->dump());
-        std::string ArrayIdx = "";
-        if (Indices[0] != 0) ArrayIdx = "[" + std::to_string(Indices[0]) + "]";
-        return Var->getName().str() + ArrayIdx + getFragmentTypeName(Type, Indices.begin() + 1, Indices.end(), FinalType);
+    std::string ArrayIdx = "";
+    auto FirstOffset = GEP->idx_begin()->get();
+    LLVM_DEBUG(errs() << "first offset: " << *FirstOffset << "\n");
+    if (!isa<Constant>(FirstOffset) || !cast<Constant>(FirstOffset)->isZeroValue()) {
+      ArrayIdx = "[" + getOriginalName(FirstOffset) + "]";
+    }
+    LLVM_DEBUG(errs() << "arrayidx: " << ArrayIdx << "\n");
+    if (GEP->getNumIndices() == 1) {
+      std::string arrayName = getOriginalName(OP, FinalType);
+      if (FinalType) {
+        *FinalType = cast<DIDerivedType>(*FinalType)->getBaseType();
       } else {
-        return "unknown-dbg-variable-intrinsic";
+        LLVM_DEBUG(errs() << "final type pointer missing for " << *GEP << "\n");
       }
+      LLVM_DEBUG(errs() << "arrayName: " << arrayName << " arrayidx: " << ArrayIdx << "\n");
+      LLVM_DEBUG(errs() << "num indices: " << GEP->getNumIndices() << "\n");
+      for(auto &index : GEP->indices()) {
+        LLVM_DEBUG(errs() << "index: " << *index << "\n");
+      }
+      return arrayName + ArrayIdx;
+    }
+    SmallVector<int64_t, 2> Indices;
+    if (!getConstOffsets(GEP->idx_begin() + 1, GEP->idx_end(), Indices)) { // skip first offset, it doesn't matter if it's constant
+      return "offset with index > 0 non const"; // TODO investigate if this ever happens
+    }
+    if (auto LI = dyn_cast<LoadInst>(OP)) {
+      // This means our pointer originated in the dereference of another pointer
+      return getOriginalRelativePointerName(LI->getPointerOperand(), ArrayIdx, Indices, FinalType);
+    } else if (auto GEP2 = dyn_cast<GetElementPtrInst>(OP)) {
+      // This means our pointer is some linear offset of another pointer, e.g. a subfield of a struct, relative to the pointer to the base of the struct
+      return getOriginalRelativePointerName(GEP2, ArrayIdx, Indices, FinalType);
+    }
+    DbgVariableIntrinsic * DVI = getSingleDbgUser(OP);
+    LLVM_DEBUG(errs() << DVI << "\n");
+    if (!DVI) {
+      // The code was compiled without debug info, or was optimised to the point where it's no longer accessible
+      return "insert-some-fallback-here"; // FIXME handle gracefully (or return null potentially)
+    }
+    if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
+      assert("this should not happen");
+    } else if(auto Decl = dyn_cast<DbgDeclareInst>(DVI)) {
+      auto Var = Decl->getVariable();
+      auto Type = Var->getType();
+      LLVM_DEBUG(Type->dump());
+      LLVM_DEBUG(Var->dump());
+      return Var->getName().str() + ArrayIdx + getFragmentTypeName(Type, Indices.begin(), Indices.end(), FinalType);
     } else {
-      DIType *T = nullptr;
-      std::string arrayName = getOriginalName(OP, &T);
-      if (T) {
-        if (FinalType) *FinalType = T;
-        else {
-          LLVM_DEBUG(errs() << "final type pointer missing for " << *GEP << "\n");
-        }
-      } else {
-        LLVM_DEBUG(errs() << "no final array type\n");
-      }
-      auto indexOP = GEP->getOperand(1); // TODO investigate if non-const indexing ever has multiple index operands
-                                         // multidimensional arrays are handled already since that is covered by
-                                         // pointer from pointer-deref
-      LLVM_DEBUG(errs() << "index operand: " << *indexOP << "\n");
-      std::string indexName = getOriginalName(indexOP);
-      return arrayName + "["+indexName+"]";
+      return "unknown-dbg-variable-intrinsic";
     }
   }
 
+  /**
+   * Reconstruct the original name of a value from debug symbols. Output string is in C syntax no matter the source language.
+   * If FinalType is given, it is set to point to the DIType of the value EXCEPT if the value is a GetElementPtrInst, where it will return the DIType of the value when read from memory.
+   */
   std::string getOriginalName(Value* V, DIType **FinalType) {
     // TODO handle globals as well
     if (auto GEP = dyn_cast<GetElementPtrInst>(V)) {
@@ -280,7 +329,16 @@ namespace {
     DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
     if (!DVI) {
       if (auto UI = dyn_cast<UnaryInstruction>(V)) { // most unary instructions don't really alter the value that much
-        return getOriginalName(UI->getOperand(0), FinalType); // TODO Figure out if this could ever cause an infinite loop in welformed programs. My guess is no.
+        std::string name = getOriginalName(UI->getOperand(0), FinalType); // TODO Figure out if this could ever cause an infinite loop in welformed programs. My guess is no.
+        if (isa<LoadInst>(UI) && !isa<GetElementPtrInst>(UI->getOperand(0))) {
+          // GEPs already return dereferenced name and type, so skip this if op is a GEP
+          // otherwise add dereference to name and type for loads
+          if (FinalType && *FinalType) {
+            *FinalType = cast<DIDerivedType>(*FinalType)->getBaseType();
+          }
+          return name + "[0]";
+        }
+        return name;
       }
       if (auto C = dyn_cast<ConstantInt>(V)) {
         return std::to_string(C->getZExtValue());
