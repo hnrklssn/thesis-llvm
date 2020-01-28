@@ -150,21 +150,21 @@ namespace {
     return ""; // This is the end of the chain, the type name is no longer part of the variable name
   }
 
-  // store uses as int64_t in a vector in reverse order
-  bool getConstOffsets(Use *Offsets_begin, Use *Offsets_end, SmallVectorImpl<int64_t> &vec) {
+  // store const uses as int64_t in a vector
+  // returns Offsets_end or pointer to first non-const use
+  Use *getConstOffsets(Use *Offsets_begin, Use *Offsets_end, SmallVectorImpl<int64_t> &vec) {
     while (Offsets_begin < Offsets_end) {
       Value *Offset = Offsets_begin->get();
       if (auto ConstOffset = dyn_cast<Constant>(Offset)) {
         LLVM_DEBUG(errs() << "getConstOffsets: " << ConstOffset->getUniqueInteger().getSExtValue() << "\n");
         vec.push_back(ConstOffset->getUniqueInteger().getSExtValue());
       } else {
-        errs() << "non const offsets? should not happen\n";
-        vec.clear();
-        return false;
+        errs() << "non const offset: " << *Offset << "\n";
+        break;
       }
       Offsets_begin++;
     }
-    return true;
+    return Offsets_begin;
   }
 
   std::string getNameFromDbgVariableIntrinsic(DbgVariableIntrinsic *VI, DIType **FinalType = nullptr) {
@@ -288,33 +288,44 @@ namespace {
       return arrayName + ArrayIdx;
     }
     SmallVector<int64_t, 2> Indices;
-    if (!getConstOffsets(GEP->idx_begin() + 1, GEP->idx_end(), Indices)) { // skip first offset, it doesn't matter if it's constant
-      return "offset with index > 0 non const"; // TODO investigate if this ever happens
-    }
+    std::string name = "";
+    Use *idx_last_const = getConstOffsets(GEP->idx_begin() + 1, GEP->idx_end(), Indices); // skip first offset, it doesn't matter if it's constant
+    DIType *T = nullptr;
     if (auto LI = dyn_cast<LoadInst>(OP)) {
       // This means our pointer originated in the dereference of another pointer
-      return getOriginalRelativePointerName(LI->getPointerOperand(), ArrayIdx, Indices, FinalType);
+      name += getOriginalRelativePointerName(LI->getPointerOperand(), ArrayIdx, Indices, &T);
     } else if (auto GEP2 = dyn_cast<GetElementPtrInst>(OP)) {
       // This means our pointer is some linear offset of another pointer, e.g. a subfield of a struct, relative to the pointer to the base of the struct
-      return getOriginalRelativePointerName(GEP2, ArrayIdx, Indices, FinalType);
-    }
-    DbgVariableIntrinsic * DVI = getSingleDbgUser(OP);
-    LLVM_DEBUG(errs() << DVI << "\n");
-    if (!DVI) {
-      // The code was compiled without debug info, or was optimised to the point where it's no longer accessible
-      return "insert-some-fallback-here"; // FIXME handle gracefully (or return null potentially)
-    }
-    if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
-      assert("this should not happen");
-    } else if(auto Decl = dyn_cast<DbgDeclareInst>(DVI)) {
-      auto Var = Decl->getVariable();
-      auto Type = Var->getType();
-      LLVM_DEBUG(Type->dump());
-      LLVM_DEBUG(Var->dump());
-      return Var->getName().str() + ArrayIdx + getFragmentTypeName(Type, Indices.begin(), Indices.end(), FinalType);
+      name += getOriginalRelativePointerName(GEP2, ArrayIdx, Indices, &T);
     } else {
-      return "unknown-dbg-variable-intrinsic";
+      DbgVariableIntrinsic * DVI = getSingleDbgUser(OP);
+      LLVM_DEBUG(errs() << DVI << "\n");
+      if (!DVI) {
+        // The code was compiled without debug info, or was optimised to the point where it's no longer accessible
+        return "insert-some-fallback-here"; // FIXME handle gracefully (or return null potentially)
+      }
+      if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
+        assert("this should not happen");
+      } else if(auto Decl = dyn_cast<DbgDeclareInst>(DVI)) {
+        auto Var = Decl->getVariable();
+        auto Type = Var->getType();
+        LLVM_DEBUG(Type->dump());
+        LLVM_DEBUG(Var->dump());
+        name += Var->getName().str() + ArrayIdx + getFragmentTypeName(Type, Indices.begin(), Indices.end(), &T);
+      } else {
+        return "unknown-dbg-variable-intrinsic";
+      }
     }
+    while(idx_last_const < GEP->idx_end()) {
+      name += "[" + getOriginalName(idx_last_const->get()) + "]";
+      Indices.clear(); // collect potential remaining constant indices
+      idx_last_const = getConstOffsets(idx_last_const + 1, GEP->idx_end(), Indices);
+      DIType *T2 = nullptr; // avoid aliasing T
+      name += getFragmentTypeName(T, Indices.begin(), Indices.end(), &T2);
+      T = T2;
+    }
+    if (FinalType) *FinalType = T;
+    return name;
   }
 
   /**
