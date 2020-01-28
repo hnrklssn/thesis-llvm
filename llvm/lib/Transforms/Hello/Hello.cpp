@@ -158,10 +158,7 @@ namespace {
       if (auto ConstOffset = dyn_cast<Constant>(Offset)) {
         LLVM_DEBUG(errs() << "getConstOffsets: " << ConstOffset->getUniqueInteger().getSExtValue() << "\n");
         vec.push_back(ConstOffset->getUniqueInteger().getSExtValue());
-      } else {
-        errs() << "non const offset: " << *Offset << "\n";
-        break;
-      }
+      } else break;
       Offsets_begin++;
     }
     return Offsets_begin;
@@ -298,14 +295,24 @@ namespace {
       // This means our pointer is some linear offset of another pointer, e.g. a subfield of a struct, relative to the pointer to the base of the struct
       name += getOriginalRelativePointerName(GEP2, ArrayIdx, Indices, &T);
     } else {
+      // Base pointer is just a variable, fetch its debug info
       DbgVariableIntrinsic * DVI = getSingleDbgUser(OP);
       LLVM_DEBUG(errs() << DVI << "\n");
       if (!DVI) {
         // The code was compiled without debug info, or was optimised to the point where it's no longer accessible
         return "insert-some-fallback-here"; // FIXME handle gracefully (or return null potentially)
       }
+
       if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
-        assert("this should not happen");
+        auto Var = Val->getVariable();
+        auto Type = Var->getType();
+        LLVM_DEBUG(Type->dump());
+        LLVM_DEBUG(Var->dump());
+        LLVM_DEBUG(Val->dump());
+        auto BaseType = cast<DIDerivedType>(Type)->getBaseType();
+        std::string Sep = ".";
+        if (ArrayIdx.empty()) Sep = "->";
+        name += Var->getName().str() + ArrayIdx + getFragmentTypeName(BaseType, Indices.begin(), Indices.end(), &T, Sep);
       } else if(auto Decl = dyn_cast<DbgDeclareInst>(DVI)) {
         auto Var = Decl->getVariable();
         auto Type = Var->getType();
@@ -316,14 +323,22 @@ namespace {
         return "unknown-dbg-variable-intrinsic";
       }
     }
+
     while(idx_last_const < GEP->idx_end()) {
       name += "[" + getOriginalName(idx_last_const->get()) + "]";
+
+      if (auto Derived = dyn_cast<DIDerivedType>(T)) T = Derived->getBaseType();
+      else if (auto Composite = dyn_cast<DICompositeType>(T)) T = Composite->getBaseType();
+      else assert(!"Unhandled DIType");
+
       Indices.clear(); // collect potential remaining constant indices
       idx_last_const = getConstOffsets(idx_last_const + 1, GEP->idx_end(), Indices);
+
       DIType *T2 = nullptr; // avoid aliasing T
       name += getFragmentTypeName(T, Indices.begin(), Indices.end(), &T2);
       T = T2;
     }
+
     if (FinalType) *FinalType = T;
     return name;
   }
