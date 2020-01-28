@@ -2,8 +2,7 @@
 
 ; CHECK:  %arrayidx = getelementptr inbounds %struct.MyStruct*, %struct.MyStruct** %arr, i64 %indvars.iv39, !dbg !45 --> arr[i]
 ; CHECK:  %inner1 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %0, i64 %indvars.iv, i32 1, i32 0, !dbg !56 --> arr[i][j].secondField.inner1
-; CHECK:  %arrayidx12 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %0, i64 0, i32 1, i32 2, i64 %indvars.iv, !dbg !59 --> non const offset:   %indvars.iv = phi i64 [ 0, %for.body4.lr.ph ], [ %indvars.iv.next, %for.body4 ]
-; CHECK:arr[i]->secondField.flexibleArr[j]
+; CHECK:  %arrayidx12 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %0, i64 0, i32 1, i32 2, i64 %indvars.iv, !dbg !59 --> arr[i]->secondField.flexibleArr[j]
 ; CHECK:---args section--
 ; CHECK:print variable arr
 ; CHECK:print variable n
