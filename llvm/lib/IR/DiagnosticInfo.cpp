@@ -20,6 +20,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DiagnosticName.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
@@ -170,6 +171,9 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key,
   }
   else if (auto *I = dyn_cast<Instruction>(V))
     Loc = I->getDebugLoc();
+
+  Val = getOriginalName(V);
+  return;
 
   // Only include names that correspond to user variables.  FIXME: We should use
   // debug info if available to get the name of the user variable.

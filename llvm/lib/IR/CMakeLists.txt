@@ -16,6 +16,7 @@ add_llvm_component_library(LLVMCore
   DebugLoc.cpp
   DiagnosticHandler.cpp
   DiagnosticInfo.cpp
+  DiagnosticName.cpp
   DiagnosticPrinter.cpp
   Dominators.cpp
   FPEnv.cpp

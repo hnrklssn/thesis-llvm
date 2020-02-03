@@ -364,7 +364,7 @@ ValueAsMetadata *ValueAsMetadata::get(Value *V) {
   return Entry;
 }
 
-ValueAsMetadata *ValueAsMetadata::getIfExists(Value *V) {
+ValueAsMetadata *ValueAsMetadata::getIfExists(const Value *V) {
   assert(V && "Unexpected null Value");
   return V->getContext().pImpl->ValuesAsMetadata.lookup(V);
 }
