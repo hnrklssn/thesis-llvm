@@ -365,7 +365,7 @@ public:
     return cast<LocalAsMetadata>(get(Local));
   }
 
-  static ValueAsMetadata *getIfExists(Value *V);
+  static ValueAsMetadata *getIfExists(const Value *V);
 
   static ConstantAsMetadata *getConstantIfExists(Value *C) {
     return cast_or_null<ConstantAsMetadata>(getIfExists(C));

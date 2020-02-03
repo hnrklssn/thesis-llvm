@@ -1,4 +1,4 @@
-; RUN: opt -load LLVMHello.so -source-names < %s 2>&1 >&2 | FileCheck %s 
+; RUN: opt -load LLVMDiagnosticNameTest%shlibext -diagnostic-names -S < %s 2>&1 >&2 | FileCheck %s
 
 ; CHECK:  %inner2 = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %arr, i64 0, i32 1, i64 %indvars.iv43, i32 
 ; CHECK:1, !dbg !47 --> arr->flexibleArr[i].inner2                                                                       

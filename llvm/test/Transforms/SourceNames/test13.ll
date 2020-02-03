@@ -1,4 +1,4 @@
-; RUN: opt -load LLVMHello.so -source-names < %s 2>&1 >&2 | FileCheck %s 
+; RUN: opt -load LLVMDiagnosticNameTest%shlibext -diagnostic-names -S < %s 2>&1 >&2 | FileCheck %s
 
 ; CHECK:  %arrayidx9 = getelementptr inbounds %struct.MyStruct*, %struct.MyStruct** %0, i64 5, !dbg !36 --> arr[0][5]
 ; CHECK:  %arrayidx = getelementptr inbounds %struct.MyStruct**, %struct.MyStruct*** %arr, i64 %indvars.iv36, !dbg !36 --> arr[i]

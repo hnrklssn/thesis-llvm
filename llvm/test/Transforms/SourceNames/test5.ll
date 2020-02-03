@@ -1,4 +1,4 @@
-; RUN: opt -load LLVMHello.so -source-names < %s 2>&1 >&2 | FileCheck %s 
+; RUN: opt -load LLVMDiagnosticNameTest%shlibext -diagnostic-names -S < %s 2>&1 >&2 | FileCheck %s
 
 ; CHECK:  %secondField = getelementptr inbounds %struct.MyStruct, %struct.MyStruct* %s, i32 0, i32 1, !dbg !27 --> s.secondField
 ; CHECK:  %inner1 = getelementptr inbounds %struct.Inner, %struct.Inner* %secondField, i32 0, i32 0, !dbg !29 --> s.secondField.inner1

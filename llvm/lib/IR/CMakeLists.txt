@@ -20,6 +20,7 @@ add_llvm_library(LLVMCore
   DebugLoc.cpp
   DiagnosticHandler.cpp
   DiagnosticInfo.cpp
+  DiagnosticName.cpp
   DiagnosticPrinter.cpp
   Dominators.cpp
   Function.cpp
