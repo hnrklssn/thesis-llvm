@@ -2,23 +2,22 @@ struct MyStruct;
 struct Inner {
 	void *inner1;
 	struct MyStruct *inner2;
+  char nameBuf[10];
 };
 struct MyStruct {
 	int firstField;
-	struct Inner secondField;
+	struct Inner flexibleArr[];
 };
 
-typedef struct MyStruct MyStruct;
+//typedef struct MyStruct MyStruct;
 
-int my_fun(MyStruct s, int ***arr, int n) {
-	int secret_int;
-	if(s.secondField.inner1) {
-		secret_int = s.secondField.inner2->firstField;
-	} else {
-		secret_int = 0;
-	}
+int my_fun(struct MyStruct *arr, int n) {
+	int secret_int = 0;
   for (int i = 0; i < n; i++)
-    for (int j = 0; j < n; j++)
-      secret_int += arr[i][j][5];
-	return s.firstField + secret_int;
+    for (int j = 0; j < n; j++) {
+      char tmp = arr[0].flexibleArr[i].nameBuf[j];
+      char tmp2 = arr[0].flexibleArr[i].inner2->firstField;
+      secret_int += tmp + tmp2 + arr[i].firstField;
+    }
+	return secret_int;
 }
