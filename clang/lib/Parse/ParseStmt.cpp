@@ -14,12 +14,14 @@
 #include "clang/AST/PrettyDeclStackTrace.h"
 #include "clang/Basic/Attributes.h"
 #include "clang/Basic/PrettyStackTrace.h"
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Parse/LoopHint.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/TypoCorrection.h"
+#include "clang/Sema/RemarkHint.h"
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -31,6 +33,7 @@ using namespace clang;
 StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
                                   ParsedStmtContext StmtCtx) {
   StmtResult Res;
+  llvm::errs() << __func__ << "\n";
 
   // We may get back a null statement if we found a #pragma. Keep going until
   // we get an actual statement.
@@ -95,6 +98,7 @@ StmtResult
 Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
                                     ParsedStmtContext StmtCtx,
                                     SourceLocation *TrailingElseLoc) {
+  llvm::errs() << __func__ << "\n";
 
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
 
@@ -154,12 +158,18 @@ StmtResult Parser::ParseStatementOrDeclarationAfterAttributes(
   const char *SemiError = nullptr;
   StmtResult Res;
   SourceLocation GNUAttributeLoc;
+  llvm::errs() << __func__ << "\n";
 
   // Cases in this switch statement should fall through if the parser expects
   // the token to end in a semicolon (in which case SemiError should be set),
   // or they directly 'return;' if not.
 Retry:
   tok::TokenKind Kind  = Tok.getKind();
+  const char *s = Tok.getName();
+  if(s)
+    llvm::errs() << __func__ << " " << s << "\n";
+  else
+    llvm::errs() << __func__ << " no name\n";
   SourceLocation AtLoc;
   switch (Kind) {
   case tok::at: // May be a @try or @throw statement
@@ -407,6 +417,11 @@ Retry:
   case tok::annot_pragma_attribute:
     HandlePragmaAttribute();
     return StmtEmpty();
+
+  case tok::annot_pragma_remark:
+    llvm::errs() << __func__ << " annot_pragma_remark\n";
+    ProhibitAttributes(Attrs);
+    return ParsePragmaRemarkHint(Stmts, StmtCtx, TrailingElseLoc, Attrs);
   }
 
   // If we reached this code, the statement must end in a semicolon.
@@ -2072,6 +2087,44 @@ StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts,
   Attrs.takeAllFrom(TempAttrs);
   return S;
 }
+
+StmtResult Parser::ParsePragmaRemarkHint(StmtVector &Stmts,
+                                       ParsedStmtContext StmtCtx,
+                                       SourceLocation *TrailingElseLoc,
+                                       ParsedAttributesWithRange &Attrs) {
+  llvm::errs() << __func__ << "\n";
+  // Create temporary attribute list.
+  ParsedAttributesWithRange TempAttrs(AttrFactory);
+  while (Tok.is(tok::annot_pragma_remark)) {
+    RemarkHint Hint;
+    if (!HandlePragmaRemark(Hint))
+      continue;
+    if (Hint.OptionLoc->Ident->getName() == "funct") { // TODO: dedup or handle cases differently
+      SmallVector<ArgsUnion, 2> ArgHints;
+      ArgHints.push_back(Hint.OptionLoc);
+      ArgHints.append(Hint.ValueLocs.begin(), Hint.ValueLocs.end());
+      TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                       Hint.PragmaNameLoc->Loc, ArgHints.begin(), ArgHints.size(),
+                       ParsedAttr::AS_Pragma);
+    } else if (Hint.OptionLoc->Ident->getName() == "loop") {
+      SmallVector<ArgsUnion, 2> ArgHints;
+      ArgHints.push_back(Hint.OptionLoc);
+      ArgHints.append(Hint.ValueLocs.begin(), Hint.ValueLocs.end());
+      TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                       Hint.PragmaNameLoc->Loc, ArgHints.begin(),
+                       ArgHints.size(), ParsedAttr::AS_Pragma);
+    } else {
+      printf("Error, no valid option in ParseStmt\n");
+    }
+  }
+  // Get the next statement.
+  MaybeParseCXX11Attributes(Attrs);
+  StmtResult S = ParseStatementOrDeclarationAfterAttributes(
+      Stmts, StmtCtx, TrailingElseLoc, Attrs);
+  Attrs.takeAllFrom(TempAttrs);
+  return S;
+}
+
 
 Decl *Parser::ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope) {
   assert(Tok.is(tok::l_brace));

@@ -14,6 +14,7 @@
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
@@ -774,6 +775,12 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
   case tok::annot_pragma_attribute:
     HandlePragmaAttribute();
     return nullptr;
+  case tok::annot_pragma_remark: {
+    llvm::errs() << __func__ << " annot_pragma_remark\n";
+    ProhibitAttributes(attrs); // not sure if needed
+    AccessSpecifier AS = AS_none;
+    return ParsePragmaRemarkHint(AS, attrs);
+  }
   case tok::semi:
     // Either a C++11 empty-declaration or attribute-declaration.
     SingleDecl =

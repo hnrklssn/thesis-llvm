@@ -22,6 +22,7 @@
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/StmtCXX.h"
@@ -1102,6 +1103,10 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   if (CurFuncDecl)
     if (const auto *VecWidth = CurFuncDecl->getAttr<MinVectorWidthAttr>())
       LargestVectorWidth = VecWidth->getVectorWidth();
+
+  if (CurFuncDecl && CurFuncDecl->hasAttr<RemarkAttr>())
+    for (auto Remark : CurFuncDecl->specific_attrs<RemarkAttr>())
+      AddRemarkMetadata(CurFn, Remark);
 }
 
 void CodeGenFunction::EmitFunctionBody(const Stmt *Body) {
@@ -2457,4 +2462,22 @@ llvm::DebugLoc CodeGenFunction::SourceLocToDebugLoc(SourceLocation Location) {
     return DI->SourceLocToDebugLoc(Location);
 
   return llvm::DebugLoc();
+}
+void CodeGenFunction::AddRemarkMetadata(llvm::Function *Fn, const RemarkAttr *RemarkAttr) {
+  using namespace llvm;
+  std::string metadata_string;
+  llvm::errs() << "addRemarkMetadata\n";
+  if (RemarkAttr->getOption() == RemarkAttr::Funct) {
+    LLVMContext &C = Fn->getContext();
+    SmallVector<Metadata*, 2> MetadataStrings;
+    for (auto Val : RemarkAttr->values()) {
+      MetadataStrings.push_back(MDString::get(C, Val));
+    }
+    MDNode *N = MDNode::get(C, llvm::makeArrayRef(MetadataStrings));
+    llvm::errs() << "spelling: " << RemarkAttr->getSpelling() << "\n";
+    Fn->setMetadata(RemarkAttr->getSpelling(), N);
+    Fn->getMetadata(RemarkAttr->getSpelling())->dump();
+  } else if (RemarkAttr->getOption() == RemarkAttr::Loop) {
+    metadata_string = "Quality Main ";
+  }
 }

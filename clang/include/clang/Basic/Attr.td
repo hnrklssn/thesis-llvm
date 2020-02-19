@@ -3432,3 +3432,28 @@ def NoBuiltin : Attr {
   let Subjects = SubjectList<[Function]>;
   let Documentation = [NoBuiltinDocs];
 }
+
+def Remark : Attr {
+  let Spellings = [Pragma<"", "remark">,
+                   Pragma<"", "remark_missed">,
+                   Pragma<"", "remark_analysis">];
+  /// let Subjects = SubjectList<[Function, ObjCMethod], ErrorDiag>;
+  let Args = [EnumArgument<"Option", "OptionType",
+                          ["file", "funct", "loop"],
+                          ["File", "Funct", "Loop"]>,
+              VariadicStringArgument<"Values">];
+  let AdditionalMembers = [{
+  static const char *getOptionName(int Option) {
+    switch(Option) {
+    case File: return "file";
+    case Funct: return "funct";
+    case Loop: return "loop";
+    }
+    llvm_unreachable("Unhandled Remark option.");
+  }
+    void printPrettyPragma(raw_ostream &OS, const PrintingPolicy &Policy) const {
+      return;
+    }
+  }];
+  let Documentation = [RemarkDocs];
+}

@@ -4463,3 +4463,12 @@ once.
   }
   }];
 }
+
+def RemarkDocs : Documentation {
+  let Category = DocCatStmt;
+  let Heading = "#pragma clang [remark/remark_missed/remark_analysis] [funct/file/loop]";
+  let Content = [{
+The ``#pragma remark`` directive allows add metadata in the IR to specific loops, functions or to the general program. This metadata tells LLVM to emit optimization remarks for the code region, no matter the flags passed.
+  }];
+}
+

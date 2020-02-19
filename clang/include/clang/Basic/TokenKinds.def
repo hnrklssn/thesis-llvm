@@ -835,6 +835,11 @@ PRAGMA_ANNOTATION(pragma_openmp_end)
 // handles #pragma loop ... directives.
 PRAGMA_ANNOTATION(pragma_loop_hint)
 
+// Annotations for optimization remark output directives #pragma clang remark ...
+// The lexer produces these so that they only take effect when the parser
+// handles #pragma remark ... directives.
+PRAGMA_ANNOTATION(pragma_remark)
+
 PRAGMA_ANNOTATION(pragma_fp)
 
 // Annotation for the attribute pragma directives - #pragma clang attribute ...

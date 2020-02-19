@@ -318,6 +318,37 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
   return OpenCLUnrollHintAttr::CreateImplicit(S.Context, UnrollFactor);
 }
 
+static Attr *handleRemarkAttr(Sema &S, Stmt *St, const ParsedAttr &A,
+                               SourceRange) {
+  IdentifierLoc *PragmaNameLoc = A.getArgAsIdent(0);
+  IdentifierLoc *OptionLoc = A.getArgAsIdent(1);
+  Expr *ValueExpr = nullptr;
+  bool PragmaLoop = OptionLoc->Ident->getName() == "loop";
+  bool PragmaFunct = OptionLoc->Ident->getName() == "funct";
+  bool PragmaFile = OptionLoc->Ident->getName() == "file";
+  RemarkAttr::OptionType Option;
+  if (PragmaLoop) {
+    Option = RemarkAttr::Loop;
+  } else if (PragmaFunct) {
+    Option = RemarkAttr::Funct;
+  } else if (PragmaFile) {
+    Option = RemarkAttr::File;
+  } else {
+    printf("Error, no main or funct\n");
+    return nullptr;
+  }
+  ValueExpr = A.getArgAsExpr(2);
+  if (!ValueExpr) {
+    printf("Error in Sema getting N\n");
+  }
+  llvm::errs() << "valueexpr: ";
+  ValueExpr->dump();
+  llvm::errs() << "\n";
+  StringRef Val = "placeholder";
+  return RemarkAttr::CreateImplicit(S.Context, Option, &Val, 1,
+                                     A.getRange());
+}
+
 static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
                                   SourceRange Range) {
   switch (A.getKind()) {
@@ -335,6 +366,8 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
     return handleOpenCLUnrollHint(S, St, A, Range);
   case ParsedAttr::AT_Suppress:
     return handleSuppressAttr(S, St, A, Range);
+  case ParsedAttr::AT_Remark:
+    return handleRemarkAttr(S, St, A, Range);
   default:
     // if we're here, then we parsed a known attribute, but didn't recognize
     // it as a statement attribute => it is declaration attribute

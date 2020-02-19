@@ -13,6 +13,7 @@
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTMutationListener.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/CXXInheritance.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
@@ -22,6 +23,8 @@
 #include "clang/AST/Mangle.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/DiagnosticSema.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "clang/Basic/TargetInfo.h"
@@ -30,12 +33,15 @@
 #include "clang/Sema/DelayedDiagnostic.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
+#include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/SemaInternal.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
 using namespace sema;
@@ -4910,6 +4916,65 @@ static void handleArmMveAliasAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   D->addAttr(::new (S.Context) ArmMveAliasAttr(S.Context, AL, Ident));
 }
 
+static void handleRemarkAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  llvm::errs() << __FUNCTION__ << "\n";
+  llvm::errs() << AL.getAttrName()->getName() << "\n";
+  llvm::errs() << AL.getNumArgs() << "\n";
+  if (!AL.getNumArgs()) {
+    llvm::errs() << "no args\n";
+  }
+  llvm::errs() << __FUNCTION__ << "1\n";
+  if (!AL.isArgIdent(0)) {
+    S.Diag(AL.getLoc(), diag::err_attribute_argument_n_type)
+        << AL << 1 << AANT_ArgumentIdentifier;
+    return;
+  }
+
+
+  llvm::errs() << __FUNCTION__ << "2\n";
+  IdentifierLoc *arg = AL.getArgAsIdent(0);
+  if (!arg) {
+    llvm::errs() << __FUNCTION__ << "2.1\n";
+    return;
+  }
+  IdentifierInfo *Ident = arg->Ident;
+  if (!Ident) {
+    llvm::errs() << __FUNCTION__ << "2.2\n";
+    return;
+  }
+  SmallVector<StringRef, 2> Vals;
+  for (size_t i = 1; i < AL.getNumArgs(); i++) {
+    IdentifierLoc *arg2 = AL.getArgAsIdent(i);
+    if (!arg2) {
+      llvm::errs() << __FUNCTION__ << "2.11\n";
+      return;
+    }
+    IdentifierInfo *Ident2 = arg2->Ident;
+    if (!Ident2) {
+      llvm::errs() << __FUNCTION__ << "2.22\n";
+      return;
+    }
+    llvm::errs() << __FUNCTION__ << " " << Ident2->getName() << " 3.5\n";
+    Vals.push_back(Ident2->getName());
+  }
+  llvm::errs() << __FUNCTION__ << "2.3\n";
+  StringRef Opt = Ident->getName();
+  if (!Opt.equals("funct")) {
+    /*S.Diag(AL.getArgAsIdent(0)->Loc, diag::err_attribute_argument_n_type)
+      << Opt << ExpectedFunction;*/
+    llvm::errs() << __FUNCTION__ <<  " " << Opt << " 2.5\n";
+    return;
+  }
+
+  llvm::errs() << __FUNCTION__ << " " << Opt << " 3\n";
+  //StringRef Val = cast<StringLiteral>(arg2)->getString();
+
+  llvm::errs() << __FUNCTION__ << "4\n";
+  D->addAttr(RemarkAttr::Create(S.Context, RemarkAttr::Funct, Vals.begin(),
+                                Vals.size(), AL));
+  llvm::errs() << __FUNCTION__ << "5\n";
+}
+
 //===----------------------------------------------------------------------===//
 // Checker-specific attribute handlers.
 //===----------------------------------------------------------------------===//
@@ -7268,6 +7333,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
 
   case ParsedAttr::AT_ArmMveAlias:
     handleArmMveAliasAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_Remark:
+    handleRemarkAttr(S, D, AL);
     break;
   }
 }

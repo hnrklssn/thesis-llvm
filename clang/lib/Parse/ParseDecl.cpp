@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/AST/ASTContext.h"
@@ -1425,6 +1426,7 @@ void Parser::LateParsedAttribute::ParseLexedAttributes() {
 /// Wrapper class which calls ParseLexedAttribute, after setting up the
 /// scope appropriately.
 void Parser::ParseLexedAttributes(ParsingClass &Class) {
+  llvm::errs() << __func__ << "\n";
   // Deal with templates
   // FIXME: Test cases to make sure this does the right thing for templates.
   bool HasTemplateScope = !Class.TopLevelClass && Class.TemplateScope;
@@ -1457,6 +1459,7 @@ void Parser::ParseLexedAttributes(ParsingClass &Class) {
 /// Parse all attributes in LAs, and attach them to Decl D.
 void Parser::ParseLexedAttributeList(LateParsedAttrList &LAs, Decl *D,
                                      bool EnterScope, bool OnDefinition) {
+  llvm::errs() << __func__ << "\n";
   assert(LAs.parseSoon() &&
          "Attribute list should be marked for immediate parsing.");
   for (unsigned i = 0, ni = LAs.size(); i < ni; ++i) {
@@ -1745,6 +1748,7 @@ Parser::DeclGroupPtrTy
 Parser::ParseDeclaration(DeclaratorContext Context, SourceLocation &DeclEnd,
                          ParsedAttributesWithRange &attrs,
                          SourceLocation *DeclSpecStart) {
+  llvm::errs() << __func__ << "\n";
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
   // Must temporarily exit the objective-c container scope for
   // parsing c none objective-c decls.
@@ -2124,11 +2128,13 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   SmallVector<Decl *, 8> DeclsInGroup;
   Decl *FirstDecl = ParseDeclarationAfterDeclaratorAndAttributes(
       D, ParsedTemplateInfo(), FRI);
-  if (LateParsedAttrs.size() > 0)
+  if (LateParsedAttrs.size() > 0) {
     ParseLexedAttributeList(LateParsedAttrs, FirstDecl, true, false);
+  }
   D.complete(FirstDecl);
-  if (FirstDecl)
+  if (FirstDecl) {
     DeclsInGroup.push_back(FirstDecl);
+  }
 
   bool ExpectSemi = Context != DeclaratorContext::ForContext;
 
@@ -3921,6 +3927,10 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 
     case tok::kw___underlying_type:
       ParseUnderlyingTypeSpecifier(DS);
+      continue;
+
+    case tok::annot_pragma_remark:
+      llvm::errs() << __func__ << ":" << __LINE__ << " found remark pragma\n";
       continue;
 
     case tok::kw__Atomic:
@@ -6231,6 +6241,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
                                      BalancedDelimiterTracker &Tracker,
                                      bool IsAmbiguous,
                                      bool RequiresArg) {
+  llvm::errs() << __func__ << "\n";
   assert(getCurScope()->isFunctionPrototypeScope() &&
          "Should call from a Function scope");
   // lparen is already consumed!
@@ -6430,6 +6441,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
                     ExceptionSpecTokens, DeclsInPrototype, StartLoc,
                     LocalEndLoc, D, TrailingReturnType, &DS),
                 std::move(FnAttrs), EndLoc);
+  llvm::errs() << __func__ << "\n";
 }
 
 /// ParseRefQualifier - Parses a member function ref-qualifier. Returns

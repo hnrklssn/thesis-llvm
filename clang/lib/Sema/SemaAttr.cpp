@@ -805,6 +805,7 @@ void Sema::ActOnPragmaAttributePop(SourceLocation PragmaLoc,
 }
 
 void Sema::AddPragmaAttributes(Scope *S, Decl *D) {
+  llvm::errs() << __FUNCTION__ << "\n";
   if (PragmaAttributeStack.empty())
     return;
   for (auto &Group : PragmaAttributeStack) {
