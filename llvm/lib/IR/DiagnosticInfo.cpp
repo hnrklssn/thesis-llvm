@@ -250,6 +250,68 @@ static const BasicBlock &getFirstFunctionBlock(const Function *Func) {
   return Func->front();
 }
 
+static bool metadataEnablesOptRemark(StringRef PassName, MDNode *MD,
+                                     DiagnosticKind Kind) {
+  assert(MD->getNumOperands() > 0);
+  auto MDS = cast<MDString>(MD->getOperand(0));
+  switch (Kind) {
+    case llvm::DK_OptimizationRemark:
+      if (!MDS->getString().equals("remark")) return false;
+      break;
+    case llvm::DK_OptimizationRemarkMissed:
+      if (!MDS->getString().equals("remark_missed")) return false;
+      break;
+    case llvm::DK_OptimizationRemarkAnalysis:
+      if (!MDS->getString().equals("remark_analysis")) return false;
+      break;
+    default:
+      llvm_unreachable("non-opt-remark kind");
+  }
+
+  for (auto &MDOp : MD->operands()) {
+    auto MDSOp = cast<MDString>(MDOp.get());
+    if (MDSOp->getString().equals(PassName)) // TODO: perform regex match to match flag behaviour
+      return true;
+  }
+  return false;
+}
+
+static bool isOptRemarkEnabledByMetadata(StringRef PassName, const Value *CR,
+                                         const Function &Func, DiagnosticKind Kind) {
+  SmallVector<MDNode *, 0> RemarkMDs;
+  Func.getMetadata("llvm.remarks", RemarkMDs);
+  for (auto MD : RemarkMDs) {
+    if (metadataEnablesOptRemark(PassName, MD, Kind))
+      return true;
+  }
+  return false; // TODO: find loop latch of BB and check Terminator
+  // if (!CR) return false;
+  // auto BB = cast<BasicBlock>(CR);
+  // auto Latch = ???;
+  // BB->getTerminator()->getMetadata();
+}
+
+static bool isPassedOptRemarkEnabledByMetadata(StringRef PassName,
+                                               const Value *CR,
+                                               const Function &Func) {
+  return isOptRemarkEnabledByMetadata(PassName, CR, Func,
+                                      DiagnosticKind::DK_OptimizationRemark);
+}
+
+static bool isMissedOptRemarkEnabledByMetadata(StringRef PassName,
+                                               const Value *CR,
+                                               const Function &Func) {
+  return isOptRemarkEnabledByMetadata(
+      PassName, CR, Func, DiagnosticKind::DK_OptimizationRemarkMissed);
+}
+
+static bool isAnalysisOptRemarkEnabledByMetadata(StringRef PassName,
+                                                 const Value *CR,
+                                                 const Function &Func) {
+  return isOptRemarkEnabledByMetadata(
+      PassName, CR, Func, DiagnosticKind::DK_OptimizationRemarkAnalysis);
+}
+
 OptimizationRemark::OptimizationRemark(const char *PassName,
                                        StringRef RemarkName,
                                        const Function *Func)
@@ -260,7 +322,9 @@ OptimizationRemark::OptimizationRemark(const char *PassName,
 bool OptimizationRemark::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
-  return Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled(getPassName());
+  return Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled(getPassName()) ||
+         isPassedOptRemarkEnabledByMetadata(getPassName(), getCodeRegion(),
+                                            getFunction());
 }
 
 OptimizationRemarkMissed::OptimizationRemarkMissed(
@@ -281,7 +345,7 @@ OptimizationRemarkMissed::OptimizationRemarkMissed(const char *PassName,
 bool OptimizationRemarkMissed::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
-  return Ctx.getDiagHandlerPtr()->isMissedOptRemarkEnabled(getPassName());
+  return Ctx.getDiagHandlerPtr()->isMissedOptRemarkEnabled(getPassName()) || isMissedOptRemarkEnabledByMetadata(getPassName(), getCodeRegion(), getFunction());
 }
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(
@@ -310,7 +374,7 @@ bool OptimizationRemarkAnalysis::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
   return Ctx.getDiagHandlerPtr()->isAnalysisRemarkEnabled(getPassName()) ||
-         shouldAlwaysPrint();
+    shouldAlwaysPrint() || isAnalysisOptRemarkEnabledByMetadata(getPassName(), getCodeRegion(), getFunction());
 }
 
 void DiagnosticInfoMIRParser::print(DiagnosticPrinter &DP) const {
