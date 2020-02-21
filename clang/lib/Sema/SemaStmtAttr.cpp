@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Sema/RemarkHint.h"
 #include "clang/Sema/SemaInternal.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/Basic/SourceManager.h"
@@ -320,33 +321,8 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
 
 static Attr *handleRemarkAttr(Sema &S, Stmt *St, const ParsedAttr &A,
                                SourceRange) {
-  IdentifierLoc *PragmaNameLoc = A.getArgAsIdent(0);
-  IdentifierLoc *OptionLoc = A.getArgAsIdent(1);
-  Expr *ValueExpr = nullptr;
-  bool PragmaLoop = OptionLoc->Ident->getName() == "loop";
-  bool PragmaFunct = OptionLoc->Ident->getName() == "funct";
-  bool PragmaFile = OptionLoc->Ident->getName() == "file";
-  RemarkAttr::OptionType Option;
-  if (PragmaLoop) {
-    Option = RemarkAttr::Loop;
-  } else if (PragmaFunct) {
-    Option = RemarkAttr::Funct;
-  } else if (PragmaFile) {
-    Option = RemarkAttr::File;
-  } else {
-    printf("Error, no main or funct\n");
-    return nullptr;
-  }
-  ValueExpr = A.getArgAsExpr(2);
-  if (!ValueExpr) {
-    printf("Error in Sema getting N\n");
-  }
-  llvm::errs() << "valueexpr: ";
-  ValueExpr->dump();
-  llvm::errs() << "\n";
-  StringRef Val = "placeholder";
-  return RemarkAttr::CreateImplicit(S.Context, Option, &Val, 1,
-                                     A.getRange());
+  St->dump();
+  return handleRemarkAttr2(S, A);
 }
 
 static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,

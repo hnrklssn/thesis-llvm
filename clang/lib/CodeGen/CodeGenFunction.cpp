@@ -12,13 +12,14 @@
 
 #include "CodeGenFunction.h"
 #include "CGBlocks.h"
-#include "CGCleanup.h"
 #include "CGCUDARuntime.h"
 #include "CGCXXABI.h"
+#include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGOpenMPRuntime.h"
 #include "CodeGenModule.h"
 #include "CodeGenPGO.h"
+#include "RemarkMetadata.h"
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
@@ -2463,21 +2464,11 @@ llvm::DebugLoc CodeGenFunction::SourceLocToDebugLoc(SourceLocation Location) {
 
   return llvm::DebugLoc();
 }
-void CodeGenFunction::AddRemarkMetadata(llvm::Function *Fn, const RemarkAttr *RemarkAttr) {
-  using namespace llvm;
-  std::string metadata_string;
+void CodeGenFunction::AddRemarkMetadata(llvm::Function *Fn,
+                                        const RemarkAttr *RemarkAttr) {
   llvm::errs() << "addRemarkMetadata\n";
-  if (RemarkAttr->getOption() == RemarkAttr::Funct) {
-    LLVMContext &C = Fn->getContext();
-    SmallVector<Metadata*, 2> MetadataStrings;
-    for (auto Val : RemarkAttr->values()) {
-      MetadataStrings.push_back(MDString::get(C, Val));
-    }
-    MDNode *N = MDNode::get(C, llvm::makeArrayRef(MetadataStrings));
-    llvm::errs() << "spelling: " << RemarkAttr->getSpelling() << "\n";
-    Fn->setMetadata(RemarkAttr->getSpelling(), N);
-    Fn->getMetadata(RemarkAttr->getSpelling())->dump();
-  } else if (RemarkAttr->getOption() == RemarkAttr::Loop) {
-    metadata_string = "Quality Main ";
-  }
+  assert(RemarkAttr->getOption() == RemarkAttr::Funct);
+  llvm::MDNode *N = createRemarkMetadata(Fn->getContext(), *RemarkAttr);
+  Fn->setMetadata("llvm.remarks", N);
+  Fn->getMetadata("llvm.remarks")->dump();
 }

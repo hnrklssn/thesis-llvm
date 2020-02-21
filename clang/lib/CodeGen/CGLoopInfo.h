@@ -14,8 +14,10 @@
 #ifndef LLVM_CLANG_LIB_CODEGEN_CGLOOPINFO_H
 #define LLVM_CLANG_LIB_CODEGEN_CGLOOPINFO_H
 
+#include "clang/AST/AST.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Compiler.h"
@@ -74,6 +76,9 @@ struct LoopAttributes {
 
   /// Value for llvm.loop.pipeline.iicount metadata.
   unsigned PipelineInitiationInterval;
+
+  /// #pragma clang remark loop(...)
+  llvm::SmallVector<const RemarkAttr*, 0> remarks_enabled;
 };
 
 /// Information used when generating a structured loop.
@@ -268,6 +273,10 @@ public:
   /// Set the pipeline initiation interval.
   void setPipelineInitiationInterval(unsigned C) {
     StagedAttrs.PipelineInitiationInterval = C;
+  }
+
+  void addRemarkAttr(const RemarkAttr *Attr) {
+    StagedAttrs.remarks_enabled.push_back(Attr);
   }
 
 private:

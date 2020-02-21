@@ -1145,6 +1145,11 @@ bool Parser::HandlePragmaRemark(RemarkHint &Hint) {
 
   bool OptionFile = OptionInfo->isStr("file");
   bool OptionFunct = OptionInfo->isStr("funct");
+  bool OptionLoop = OptionInfo->isStr("loop");
+
+  if (!(OptionFunct || OptionFile || OptionLoop)) {
+    llvm::errs() << "Neither file or funct as option parameters\n";
+  }
 
   llvm::ArrayRef<Token> Toks = Info->Toks;
   PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/false,
@@ -1152,19 +1157,10 @@ bool Parser::HandlePragmaRemark(RemarkHint &Hint) {
 
   ConsumeAnnotationToken();
 
-  if (OptionFunct) {
-    do {
-      IdentifierLoc *Result = ParseIdentifierLoc();
-      Hint.ValueLocs.push_back(Result);
-    } while (Tok.isAnyIdentifier());
-  } else if (OptionFile) {
-    do {
-      IdentifierLoc *Result = ParseIdentifierLoc();
-      Hint.ValueLocs.push_back(Result);
-    } while (Tok.isAnyIdentifier());
-  } else {
-    printf("Neither file or funct as option parameters\n");
-  }
+  do {
+    IdentifierLoc *Result = ParseIdentifierLoc();
+    Hint.ValueLocs.push_back(Result);
+  } while (Tok.isAnyIdentifier());
 
     // Tokens following an error in an ill-formed constant expression will
     // remain in the token stream and must be removed.
