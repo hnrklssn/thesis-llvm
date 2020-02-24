@@ -20,6 +20,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/YAMLTraits.h"
 #include <algorithm>
@@ -388,7 +389,7 @@ public:
 
   /// Return the absolute path tot the file.
   std::string getAbsolutePath() const;
-  
+
   const Function &getFunction() const { return Fn; }
   DiagnosticLocation getLocation() const { return Loc; }
 
@@ -658,6 +659,8 @@ public:
 
   const Value *getCodeRegion() const { return CodeRegion; }
 
+  void setLoopID(MDNode *MD) { LoopID = Optional<MDNode*>(MD); }
+
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() >= DK_FirstRemark && DI->getKind() <= DK_LastRemark;
   }
@@ -666,6 +669,11 @@ private:
   /// The IR value (currently basic block) that the optimization operates on.
   /// This is currently used to provide run-time hotness information with PGO.
   const Value *CodeRegion = nullptr;
+  Optional<MDNode*> LoopID;
+
+protected:
+  Optional<MDNode*> getLoopID() const { return LoopID; }
+  bool isOptRemarkEnabledByMetadata() const;
 };
 
 /// Diagnostic information for applied optimization remarks.

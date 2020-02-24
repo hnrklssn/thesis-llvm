@@ -13,6 +13,7 @@
 
 #include "llvm/IR/DiagnosticInfo.h"
 #include "LLVMContextImpl.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator_range.h"
@@ -119,7 +120,7 @@ DiagnosticLocation::DiagnosticLocation(const DebugLoc &DL) {
 DiagnosticLocation::DiagnosticLocation(const DISubprogram *SP) {
   if (!SP)
     return;
-  
+
   File = SP->getFile();
   Line = SP->getScopeLine();
   Column = 0;
@@ -252,64 +253,67 @@ static const BasicBlock &getFirstFunctionBlock(const Function *Func) {
 
 static bool metadataEnablesOptRemark(StringRef PassName, MDNode *MD,
                                      DiagnosticKind Kind) {
-  assert(MD->getNumOperands() > 0);
-  auto MDS = cast<MDString>(MD->getOperand(0));
-  switch (Kind) {
+  errs() << __FUNCTION__ << " 1\n";
+  if (MD->getNumOperands() == 0)
+    return false;
+
+  if (auto MDS = dyn_cast<MDString>(MD->getOperand(0))) {
+    switch (Kind) {
     case llvm::DK_OptimizationRemark:
-      if (!MDS->getString().equals("remark")) return false;
+      if (!MDS->getString().equals("remark"))
+        return false;
       break;
     case llvm::DK_OptimizationRemarkMissed:
-      if (!MDS->getString().equals("remark_missed")) return false;
+      if (!MDS->getString().equals("remark_missed"))
+        return false;
       break;
     case llvm::DK_OptimizationRemarkAnalysis:
-      if (!MDS->getString().equals("remark_analysis")) return false;
+      if (!MDS->getString().equals("remark_analysis"))
+        return false;
       break;
     default:
-      llvm_unreachable("non-opt-remark kind");
+      return false; // Metadata is not opt remark hint
+    }
+
+    for (auto &MDOp : MD->operands()) {
+      auto MDSOp = cast<MDString>(MDOp.get());
+      if (MDSOp->getString().equals(
+              PassName)) // TODO: perform regex match to match flag behaviour
+        return true;
+    }
   }
 
-  for (auto &MDOp : MD->operands()) {
-    auto MDSOp = cast<MDString>(MDOp.get());
-    if (MDSOp->getString().equals(PassName)) // TODO: perform regex match to match flag behaviour
-      return true;
-  }
-  return false;
+  return false; // Metadata is not opt remark hint
 }
 
-static bool isOptRemarkEnabledByMetadata(StringRef PassName, const Value *CR,
-                                         const Function &Func, DiagnosticKind Kind) {
+bool DiagnosticInfoIROptimization::isOptRemarkEnabledByMetadata() const {
+  const Function &Func = getFunction();
+  const Value *CR = getCodeRegion();
+  StringRef PassName = getPassName();
+  DiagnosticKind Kind = (DiagnosticKind) getKind();
   SmallVector<MDNode *, 0> RemarkMDs;
   Func.getMetadata("llvm.remarks", RemarkMDs);
   for (auto MD : RemarkMDs) {
     if (metadataEnablesOptRemark(PassName, MD, Kind))
       return true;
   }
-  return false; // TODO: find loop latch of BB and check Terminator
-  // if (!CR) return false;
-  // auto BB = cast<BasicBlock>(CR);
-  // auto Latch = ???;
-  // BB->getTerminator()->getMetadata();
-}
-
-static bool isPassedOptRemarkEnabledByMetadata(StringRef PassName,
-                                               const Value *CR,
-                                               const Function &Func) {
-  return isOptRemarkEnabledByMetadata(PassName, CR, Func,
-                                      DiagnosticKind::DK_OptimizationRemark);
-}
-
-static bool isMissedOptRemarkEnabledByMetadata(StringRef PassName,
-                                               const Value *CR,
-                                               const Function &Func) {
-  return isOptRemarkEnabledByMetadata(
-      PassName, CR, Func, DiagnosticKind::DK_OptimizationRemarkMissed);
-}
-
-static bool isAnalysisOptRemarkEnabledByMetadata(StringRef PassName,
-                                                 const Value *CR,
-                                                 const Function &Func) {
-  return isOptRemarkEnabledByMetadata(
-      PassName, CR, Func, DiagnosticKind::DK_OptimizationRemarkAnalysis);
+  Optional<MDNode *> LR = getLoopID();
+  MDNode *LoopMD = nullptr;
+  if (LoopID.hasValue()) {
+    LoopMD = LR.getValue();
+  } else if (CR) { // Make a best effort attempt to get loop data from BB even if loop recognition fails
+    auto BB = cast<BasicBlock>(CR);
+    LoopMD = BB->getTerminator()->getMetadata("llvm.loop");
+  }
+  if (LoopMD) {
+    for (auto &MDOpt : LoopMD->operands()) {
+      if (auto MD = dyn_cast<MDNode>(MDOpt.get())) {
+        if (metadataEnablesOptRemark(PassName, MD, Kind))
+          return true;
+      }
+    }
+  }
+  return false;
 }
 
 OptimizationRemark::OptimizationRemark(const char *PassName,
@@ -323,8 +327,7 @@ bool OptimizationRemark::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
   return Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled(getPassName()) ||
-         isPassedOptRemarkEnabledByMetadata(getPassName(), getCodeRegion(),
-                                            getFunction());
+         isOptRemarkEnabledByMetadata();
 }
 
 OptimizationRemarkMissed::OptimizationRemarkMissed(
@@ -345,7 +348,7 @@ OptimizationRemarkMissed::OptimizationRemarkMissed(const char *PassName,
 bool OptimizationRemarkMissed::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
-  return Ctx.getDiagHandlerPtr()->isMissedOptRemarkEnabled(getPassName()) || isMissedOptRemarkEnabledByMetadata(getPassName(), getCodeRegion(), getFunction());
+  return Ctx.getDiagHandlerPtr()->isMissedOptRemarkEnabled(getPassName()) || isOptRemarkEnabledByMetadata();
 }
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(
@@ -374,7 +377,7 @@ bool OptimizationRemarkAnalysis::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
   return Ctx.getDiagHandlerPtr()->isAnalysisRemarkEnabled(getPassName()) ||
-    shouldAlwaysPrint() || isAnalysisOptRemarkEnabledByMetadata(getPassName(), getCodeRegion(), getFunction());
+    shouldAlwaysPrint() || isOptRemarkEnabledByMetadata();
 }
 
 void DiagnosticInfoMIRParser::print(DiagnosticPrinter &DP) const {
