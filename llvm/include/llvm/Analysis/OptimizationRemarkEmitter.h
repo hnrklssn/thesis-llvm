@@ -36,8 +36,8 @@ class Value;
 /// enabled in the LLVM context.
 class OptimizationRemarkEmitter {
 public:
-  OptimizationRemarkEmitter(const Function *F, BlockFrequencyInfo *BFI)
-      : F(F), BFI(BFI) {}
+  OptimizationRemarkEmitter(const Function *F, LoopInfo *LI, BlockFrequencyInfo *BFI)
+    : F(F), LI(LI), BFI(BFI) {}
 
   /// This variant can be used to generate ORE on demand (without the
   /// analysis pass).
@@ -53,11 +53,12 @@ public:
   OptimizationRemarkEmitter(const Function *F);
 
   OptimizationRemarkEmitter(OptimizationRemarkEmitter &&Arg)
-      : F(Arg.F), BFI(Arg.BFI) {}
+    : F(Arg.F), LI(Arg.LI), BFI(Arg.BFI) {}
 
   OptimizationRemarkEmitter &operator=(OptimizationRemarkEmitter &&RHS) {
     F = RHS.F;
     BFI = RHS.BFI;
+    LI = RHS.LI;
     return *this;
   }
 
@@ -99,9 +100,11 @@ public:
 private:
   const Function *F;
 
+  LoopInfo *LI;
   BlockFrequencyInfo *BFI;
 
-  /// If we generate BFI on demand, we need to free it when ORE is freed.
+  /// If we generate LI and BFI on demand, we need to free it when ORE is freed.
+  std::unique_ptr<LoopInfo> OwnedLI;
   std::unique_ptr<BlockFrequencyInfo> OwnedBFI;
 
   /// Compute hotness from IR value (currently assumed to be a block) if PGO is
@@ -110,6 +113,12 @@ private:
 
   /// Similar but use value from \p OptDiag and update hotness there.
   void computeHotness(DiagnosticInfoIROptimization &OptDiag);
+
+  /// Compute loop data from IR value (currently assumed to be a block)
+  Loop *computeLoop(const Value *V);
+
+  /// Similar but use value from \p OptDiag and update loop there.
+  void computeLoop(DiagnosticInfoIROptimization &OptDiag);
 
   /// Only allow verbose messages if we know we're filtering by hotness
   /// (BFI is only set in this case).

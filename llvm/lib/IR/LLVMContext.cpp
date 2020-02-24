@@ -183,6 +183,7 @@ void LLVMContext::emitError(const Instruction *I, const Twine &ErrorStr) {
 }
 
 static bool isDiagnosticEnabled(const DiagnosticInfo &DI) {
+  errs() << __FUNCTION__ << " " << DI.getKind() << "\n";
   // Optimization remarks are selective. They need to check whether the regexp
   // pattern, passed via one of the -pass-remarks* flags, matches the name of
   // the pass that is emitting the diagnostic. If there is no match, ignore the
@@ -190,10 +191,16 @@ static bool isDiagnosticEnabled(const DiagnosticInfo &DI) {
   //
   // Also noisy remarks are only enabled if we have hotness information to sort
   // them.
-  if (auto *Remark = dyn_cast<DiagnosticInfoOptimizationBase>(&DI))
+  if (auto *Remark = dyn_cast<DiagnosticInfoOptimizationBase>(&DI)) {
+    errs() << __FUNCTION__ << " " << Remark->getRemarkName() << "\n";
+    if (isa<OptimizationRemark>(Remark)) {
+      errs() << "isa opt-remark\n";
+    }
     return Remark->isEnabled() &&
            (!Remark->isVerbose() || Remark->getHotness());
+  }
 
+  errs() << __FUNCTION__ << " 2\n";
   return true;
 }
 

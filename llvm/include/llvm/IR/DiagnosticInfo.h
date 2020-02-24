@@ -19,6 +19,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/YAMLTraits.h"
@@ -658,6 +659,8 @@ public:
 
   const Value *getCodeRegion() const { return CodeRegion; }
 
+  void setLoopRegion(Loop *L) { LoopRegion = Optional<Loop*>(L); }
+
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() >= DK_FirstRemark && DI->getKind() <= DK_LastRemark;
   }
@@ -666,6 +669,11 @@ private:
   /// The IR value (currently basic block) that the optimization operates on.
   /// This is currently used to provide run-time hotness information with PGO.
   const Value *CodeRegion = nullptr;
+  Optional<Loop*> LoopRegion;
+
+protected:
+  Optional<Loop*> getLoopRegion() const { return LoopRegion; }
+  bool isOptRemarkEnabledByMetadata() const;
 };
 
 /// Diagnostic information for applied optimization remarks.

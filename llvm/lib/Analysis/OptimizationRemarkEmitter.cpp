@@ -15,10 +15,12 @@
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/LazyBlockFrequencyInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/InitializePasses.h"
+#include <memory>
 
 using namespace llvm;
 
@@ -32,12 +34,13 @@ OptimizationRemarkEmitter::OptimizationRemarkEmitter(const Function *F)
   DT.recalculate(*const_cast<Function *>(F));
 
   // Generate LoopInfo from it.
-  LoopInfo LI;
-  LI.analyze(DT);
+  OwnedLI = std::make_unique<LoopInfo>();
+  LI = OwnedLI.get();
+  LI->analyze(DT);
 
   // Then compute BranchProbabilityInfo.
   BranchProbabilityInfo BPI;
-  BPI.calculate(*F, LI);
+  BPI.calculate(*F, *LI);
 
   // Finally compute BFI.
   OwnedBFI = std::make_unique<BlockFrequencyInfo>(*F, BPI, LI);
@@ -47,9 +50,10 @@ OptimizationRemarkEmitter::OptimizationRemarkEmitter(const Function *F)
 bool OptimizationRemarkEmitter::invalidate(
     Function &F, const PreservedAnalyses &PA,
     FunctionAnalysisManager::Invalidator &Inv) {
+  bool LIValid = LI && LI->invalidate(F, PA, Inv);
   // This analysis has no state and so can be trivially preserved but it needs
   // a fresh view of BFI if it was constructed with one.
-  if (BFI && Inv.invalidate<BlockFrequencyAnalysis>(F, PA))
+  if (BFI && Inv.invalidate<BlockFrequencyAnalysis>(F, PA) && LIValid)
     return true;
 
   // Otherwise this analysis result remains valid.
@@ -68,6 +72,20 @@ void OptimizationRemarkEmitter::computeHotness(
   const Value *V = OptDiag.getCodeRegion();
   if (V)
     OptDiag.setHotness(computeHotness(V));
+}
+
+Loop *OptimizationRemarkEmitter::computeLoop(const Value *V) {
+  if (!LI)
+    return nullptr;
+
+  return LI->getLoopFor(cast<BasicBlock>(V));
+}
+
+void OptimizationRemarkEmitter::computeLoop(
+    DiagnosticInfoIROptimization &OptDiag) {
+  const Value *V = OptDiag.getCodeRegion();
+  if (V)
+    OptDiag.setLoopRegion(computeLoop(V));
 }
 
 void OptimizationRemarkEmitter::emit(
@@ -113,6 +131,7 @@ AnalysisKey OptimizationRemarkEmitterAnalysis::Key;
 OptimizationRemarkEmitter
 OptimizationRemarkEmitterAnalysis::run(Function &F,
                                        FunctionAnalysisManager &AM) {
+  LoopInfo *LI = &AM.getResult<LoopAnalysis>(F);
   BlockFrequencyInfo *BFI;
 
   if (F.getContext().getDiagnosticsHotnessRequested())
@@ -120,7 +139,7 @@ OptimizationRemarkEmitterAnalysis::run(Function &F,
   else
     BFI = nullptr;
 
-  return OptimizationRemarkEmitter(&F, BFI);
+  return OptimizationRemarkEmitter(&F, LI, BFI);
 }
 
 char OptimizationRemarkEmitterWrapperPass::ID = 0;
