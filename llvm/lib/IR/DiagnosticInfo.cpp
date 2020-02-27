@@ -253,7 +253,6 @@ static const BasicBlock &getFirstFunctionBlock(const Function *Func) {
 
 static bool metadataEnablesOptRemark(StringRef PassName, MDNode *MD,
                                      DiagnosticKind Kind) {
-  errs() << __FUNCTION__ << " 1\n";
   if (MD->getNumOperands() == 0)
     return false;
 
@@ -277,8 +276,7 @@ static bool metadataEnablesOptRemark(StringRef PassName, MDNode *MD,
 
     for (auto &MDOp : MD->operands()) {
       auto MDSOp = cast<MDString>(MDOp.get());
-      if (MDSOp->getString().equals(
-              PassName)) // TODO: perform regex match to match flag behaviour
+      if (MDSOp->getString().equals(PassName)) // TODO: perform regex match to match flag behaviour
         return true;
     }
   }
@@ -291,18 +289,32 @@ bool DiagnosticInfoIROptimization::isOptRemarkEnabledByMetadata() const {
   const Value *CR = getCodeRegion();
   StringRef PassName = getPassName();
   DiagnosticKind Kind = (DiagnosticKind) getKind();
+
+  // Function level remark output
   SmallVector<MDNode *, 0> RemarkMDs;
   Func.getMetadata("llvm.remarks", RemarkMDs);
   for (auto MD : RemarkMDs) {
     if (metadataEnablesOptRemark(PassName, MD, Kind))
       return true;
   }
+
+  // Module level remark output
+  const Module *M = Func.getParent();
+  auto NamedMD = M->getNamedMetadata("llvm.remarks");
+  for (auto MD : NamedMD->operands()) {
+    if (metadataEnablesOptRemark(PassName, MD, Kind))
+      return true;
+  }
+
+  // Loop level remark output
   Optional<MDNode *> LR = getLoopID();
   MDNode *LoopMD = nullptr;
   if (LoopID.hasValue()) {
     LoopMD = LR.getValue();
   } else if (CR) { // Make a best effort attempt to get loop data from BB even if loop recognition fails
     auto BB = cast<BasicBlock>(CR);
+    // instead of creating new named MD (llvm.remarks), it is attached to the loop ID along with everything
+    // else loop related
     LoopMD = BB->getTerminator()->getMetadata("llvm.loop");
   }
   if (LoopMD) {
@@ -313,6 +325,7 @@ bool DiagnosticInfoIROptimization::isOptRemarkEnabledByMetadata() const {
       }
     }
   }
+
   return false;
 }
 

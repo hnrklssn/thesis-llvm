@@ -21,6 +21,7 @@
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/ParsedAttr.h"
+#include "clang/Sema/RemarkHint.h"
 #include "clang/Sema/Scope.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1189,14 +1190,21 @@ Parser::ParsePragmaRemarkHint(AccessSpecifier AS,
   SmallVector<ArgsUnion, 2> ArgHints;
   ArgHints.push_back(Hint.OptionLoc);
   ArgHints.append(Hint.ValueLocs.begin(), Hint.ValueLocs.end());
-  llvm::errs() << __PRETTY_FUNCTION__ << Hint.OptionLoc << " 2\n";
+
+  if (Hint.OptionLoc->Ident->getName().equals("file")) {
+    ParsedAttributesWithRange ModuleAttrs(AttrFactory);
+    ModuleAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                 Hint.PragmaNameLoc->Loc, ArgHints.begin(), ArgHints.size(),
+                 ParsedAttr::AS_Pragma);
+    RemarkAttr *Attr = handleRemarkAttr2(Actions, ModuleAttrs.front());
+    Actions.ActOnPragmaRemarkFile(Attr);
+    return nullptr;
+  }
+
+  // TODO: add diagnostic if option is not "funct"
   Attrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
                Hint.PragmaNameLoc->Loc, ArgHints.begin(), ArgHints.size(), ParsedAttr::AS_Pragma);
 
-  llvm::errs() << __PRETTY_FUNCTION__ << " 3\n";
-  llvm::errs() << __PRETTY_FUNCTION__ << " " << Hint.OptionLoc << " 3.1\n";
-  llvm::errs() << __PRETTY_FUNCTION__ << " " << ArgHints[0].get<IdentifierLoc*>() << " 3.1.1\n";
-  llvm::errs() << __PRETTY_FUNCTION__ << " " << Hint.OptionLoc->Ident->getName() << " 3.3\n";
   llvm::SmallVector<Decl *, 4> Decls;
   DeclGroupPtrTy Ptr;
   // Here we expect to see some function declaration.
@@ -1204,10 +1212,8 @@ Parser::ParsePragmaRemarkHint(AccessSpecifier AS,
     assert(TagType == DeclSpec::TST_unspecified);
     MaybeParseCXX11Attributes(Attrs);
     ParsingDeclSpec PDS(*this);
-    llvm::errs() << __PRETTY_FUNCTION__ << " 3.4\n";
     return ParseExternalDeclaration(Attrs, &PDS);
   } else {
-    llvm::errs() << __PRETTY_FUNCTION__ << " 3.5\n";
     return ParseCXXClassMemberDeclarationWithPragmas(AS, Attrs, TagType, Tag);
   }
 }

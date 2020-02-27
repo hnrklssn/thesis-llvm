@@ -24,8 +24,10 @@
 #include "CodeGenPGO.h"
 #include "ConstantEmitter.h"
 #include "CoverageMappingGen.h"
+#include "RemarkMetadata.h"
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
@@ -580,6 +582,10 @@ void CodeGenModule::Release() {
       llvm::LLVMContext &Ctx = TheModule.getContext();
       SPIRVerMD->addOperand(llvm::MDNode::get(Ctx, SPIRVerElts));
     }
+  }
+
+  if (!Context.getModuleRemarkAttrs().empty()) {
+    EmitModuleRemarkMetadata();
   }
 
   if (uint32_t PLevel = Context.getLangOpts().PICLevel) {
@@ -5927,4 +5933,14 @@ CodeGenModule::createOpenCLIntToSamplerConversion(const Expr *E,
   return CGF.Builder.CreateCall(CreateRuntimeFunction(FTy,
                                 "__translate_sampler_initializer"),
                                 {C});
+}
+
+void CodeGenModule::EmitModuleRemarkMetadata() {
+  auto NamedMD = TheModule.getOrInsertNamedMetadata("llvm.remarks");
+  for (auto Attr : Context.getModuleRemarkAttrs()) {
+    auto RAttr = cast<RemarkAttr>(Attr);
+    assert(RAttr->getOption() == RemarkAttr::File);
+    llvm::MDNode *N = createRemarkMetadata(getLLVMContext(), *RAttr);
+    NamedMD->addOperand(N);
+  }
 }

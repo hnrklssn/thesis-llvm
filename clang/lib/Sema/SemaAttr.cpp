@@ -13,11 +13,14 @@
 
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/Expr.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/SemaInternal.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSwitch.h"
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -993,4 +996,9 @@ void Sema::PopPragmaVisibility(bool IsNamespaceEnd, SourceLocation EndLoc) {
   // To simplify the implementation, never keep around an empty stack.
   if (Stack->empty())
     FreeVisContext();
+}
+
+void Sema::ActOnPragmaRemarkFile(RemarkAttr *Attr) {
+  assert(Attr->getOption() == RemarkAttr::File);
+  Context.addModuleRemarkAttr(Attr);
 }
