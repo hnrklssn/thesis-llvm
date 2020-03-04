@@ -267,10 +267,26 @@ namespace clang {
       Ctx.setDiagnosticHandler(std::make_unique<ClangDiagnosticHandler>(
         CodeGenOpts, this));
 
+      StringRef OptRecordFormat(CodeGenOpts.OptRecordFormat);
+      StringRef OptRecordFilePath(CodeGenOpts.OptRecordFile);
+      // Compiler flags overrule pragmas
+      if (OptRecordFormat.empty() || OptRecordFilePath.empty()) {
+        for (auto Attr : Context->getModuleRemarkAttrs()) {
+          auto RAttr = cast<RemarkAttr>(Attr);
+          if (RAttr->getOption() != RemarkAttr::Conf)
+            continue;
+          auto Params = RAttr->values_begin();
+          if (OptRecordFormat.empty())
+            OptRecordFormat = Params[0];
+          if (OptRecordFilePath.empty() && RAttr->values_size() > 1)
+            OptRecordFilePath = Params[1];
+        }
+      }
+
       Expected<std::unique_ptr<llvm::ToolOutputFile>> OptRecordFileOrErr =
-          setupOptimizationRemarks(Ctx, CodeGenOpts.OptRecordFile,
+          setupOptimizationRemarks(Ctx, OptRecordFilePath,
                                    CodeGenOpts.OptRecordPasses,
-                                   CodeGenOpts.OptRecordFormat,
+                                   OptRecordFormat,
                                    CodeGenOpts.DiagnosticsWithHotness,
                                    CodeGenOpts.DiagnosticsHotnessThreshold);
 
@@ -279,7 +295,7 @@ namespace clang {
             std::move(E),
             [&](const RemarkSetupFileError &E) {
               Diags.Report(diag::err_cannot_open_file)
-                  << CodeGenOpts.OptRecordFile << E.message();
+                  << OptRecordFilePath << E.message();
             },
             [&](const RemarkSetupPatternError &E) {
               Diags.Report(diag::err_drv_optimization_remark_pattern)
@@ -287,7 +303,7 @@ namespace clang {
             },
             [&](const RemarkSetupFormatError &E) {
               Diags.Report(diag::err_drv_optimization_remark_format)
-                  << CodeGenOpts.OptRecordFormat;
+                  << OptRecordFormat;
             });
         return;
       }

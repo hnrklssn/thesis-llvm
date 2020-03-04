@@ -10765,15 +10765,5 @@ QualType ASTContext::getCorrespondingSignedFixedPointType(QualType Ty) const {
 }
 
 void ASTContext::addModuleRemarkAttr(RemarkAttr *RemarkAttr) {
-  switch (RemarkAttr->getOption()) {
-  case RemarkAttr::Funct:
-    break;
-  case RemarkAttr::Loop:
-    break;
-  case RemarkAttr::File:
-    break;
-  default:
-    return;
-  }
   ModuleRemarks.push_back(RemarkAttr);
 }

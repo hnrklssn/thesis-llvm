@@ -2099,22 +2099,15 @@ StmtResult Parser::ParsePragmaRemarkHint(StmtVector &Stmts,
     RemarkHint Hint;
     if (!HandlePragmaRemark(Hint))
       continue;
-    if (Hint.OptionLoc->Ident->getName() == "funct") { // TODO: dedup or handle cases differently
+    if (Hint.OptionLoc->Ident->getName() == "loop") {
       SmallVector<ArgsUnion, 2> ArgHints;
       ArgHints.push_back(Hint.OptionLoc);
-      ArgHints.append(Hint.ValueLocs.begin(), Hint.ValueLocs.end());
-      TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
-                       Hint.PragmaNameLoc->Loc, ArgHints.begin(), ArgHints.size(),
-                       ParsedAttr::AS_Pragma);
-    } else if (Hint.OptionLoc->Ident->getName() == "loop") {
-      SmallVector<ArgsUnion, 2> ArgHints;
-      ArgHints.push_back(Hint.OptionLoc);
-      ArgHints.append(Hint.ValueLocs.begin(), Hint.ValueLocs.end());
+      ArgHints.append(Hint.ValueExprs.begin(), Hint.ValueExprs.end());
       TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
                        Hint.PragmaNameLoc->Loc, ArgHints.begin(),
                        ArgHints.size(), ParsedAttr::AS_Pragma);
     } else {
-      printf("Error, no valid option in ParseStmt\n");
+      printf("Error, invalid option in ParseStmt\n");
     }
   }
   // Get the next statement.

@@ -11621,7 +11621,8 @@ public:
     BuiltinFunction
   };
 
-  void ActOnPragmaRemarkFile(RemarkAttr *Attr);
+  /// Saves module level remark pragmas (i.e. file and conf) for later reference
+  void ActOnPragmaModuleRemark(RemarkAttr *Attr);
 };
 
 /// RAII object that enters a new expression evaluation context.

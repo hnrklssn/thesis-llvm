@@ -319,12 +319,6 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
   return OpenCLUnrollHintAttr::CreateImplicit(S.Context, UnrollFactor);
 }
 
-static Attr *handleRemarkAttr(Sema &S, Stmt *St, const ParsedAttr &A,
-                               SourceRange) {
-  St->dump();
-  return handleRemarkAttr2(S, A);
-}
-
 static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
                                   SourceRange Range) {
   switch (A.getKind()) {
@@ -343,7 +337,7 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
   case ParsedAttr::AT_Suppress:
     return handleSuppressAttr(S, St, A, Range);
   case ParsedAttr::AT_Remark:
-    return handleRemarkAttr(S, St, A, Range);
+    return handleRemarkAttr(S, A);
   default:
     // if we're here, then we parsed a known attribute, but didn't recognize
     // it as a statement attribute => it is declaration attribute

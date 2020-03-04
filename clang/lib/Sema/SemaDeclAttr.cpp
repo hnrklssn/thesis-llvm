@@ -4919,7 +4919,7 @@ static void handleArmMveAliasAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
 
 static void handleRemarkAttrFunc(Sema &S, Decl *D, const ParsedAttr &AL) {
   llvm::errs() << __FUNCTION__ << "\n";
-  RemarkAttr *Attr = handleRemarkAttr2(S, AL);
+  RemarkAttr *Attr = handleRemarkAttr(S, AL);
   if (!Attr)
     return;
   if (Attr->getOption() != RemarkAttr::Funct) {

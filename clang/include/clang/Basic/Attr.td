@@ -3437,10 +3437,10 @@ def Remark : Attr {
   let Spellings = [Pragma<"", "remark">,
                    Pragma<"", "remark_missed">,
                    Pragma<"", "remark_analysis">];
-  /// let Subjects = SubjectList<[Function, ObjCMethod], ErrorDiag>;
+  /// Conf is only valid with 1-2 values: one defining output format, and optionally one defining output file location
   let Args = [EnumArgument<"Option", "OptionType",
-                          ["file", "funct", "loop"],
-                          ["File", "Funct", "Loop"]>,
+                          ["file", "funct", "loop", "conf"],
+                          ["File", "Funct", "Loop", "Conf"]>,
               VariadicStringArgument<"Values">];
   let AdditionalMembers = [{
   static const char *getOptionName(int Option) {
@@ -3448,6 +3448,7 @@ def Remark : Attr {
     case File: return "file";
     case Funct: return "funct";
     case Loop: return "loop";
+    case Conf: return "conf";
     }
     llvm_unreachable("Unhandled Remark option.");
   }

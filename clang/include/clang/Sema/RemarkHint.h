@@ -15,13 +15,13 @@ struct RemarkHint {
   SourceRange Range;
   IdentifierLoc *PragmaNameLoc;
   IdentifierLoc *OptionLoc;
-  SmallVector<IdentifierLoc *, 2> ValueLocs;
+  SmallVector<Expr *, 2> ValueExprs;
 
   RemarkHint()
-    : Range(), PragmaNameLoc(nullptr), OptionLoc(nullptr), ValueLocs()  {}
+    : Range(), PragmaNameLoc(nullptr), OptionLoc(nullptr), ValueExprs()  {}
 };
 
-RemarkAttr *handleRemarkAttr2(Sema &S, const ParsedAttr &AL);
+RemarkAttr *handleRemarkAttr(Sema &S, const ParsedAttr &AL);
 
 } // namespace clang
 #endif // LLVM_CLANG_SEMA_REMARK_HINT_H

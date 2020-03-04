@@ -1,4 +1,7 @@
 #include "clang/Sema/RemarkHint.h"
+#include "clang/AST/Attrs.inc"
+#include "clang/Basic/DiagnosticDriver.h"
+#include "llvm/ADT/StringRef.h"
 //#include "clang/AST/ASTContext.h"
 //#include "clang/Sema/SemaInternal.h"
 //#include "clang/AST/Attrs.inc"
@@ -10,7 +13,7 @@
 using namespace clang;
 //using namespace sema;
 namespace clang {
-RemarkAttr *handleRemarkAttr2(Sema &S, const ParsedAttr &AL) {
+  RemarkAttr *handleRemarkAttr(Sema &S, const ParsedAttr &AL) {
   llvm::errs() << __FUNCTION__ << "\n";
   llvm::errs() << AL.getAttrName()->getName() << "\n";
   llvm::errs() << AL.getNumArgs() << "\n";
@@ -28,30 +31,12 @@ RemarkAttr *handleRemarkAttr2(Sema &S, const ParsedAttr &AL) {
   llvm::errs() << __FUNCTION__ << "2\n";
   IdentifierLoc *arg = AL.getArgAsIdent(0);
   if (!arg) {
-    llvm::errs() << __FUNCTION__ << "2.1\n";
     return nullptr;
   }
   IdentifierInfo *Ident = arg->Ident;
   if (!Ident) {
-    llvm::errs() << __FUNCTION__ << "2.2\n";
     return nullptr;
   }
-  SmallVector<StringRef, 2> Vals;
-  for (size_t i = 1; i < AL.getNumArgs(); i++) {
-    IdentifierLoc *arg2 = AL.getArgAsIdent(i);
-    if (!arg2) {
-      llvm::errs() << __FUNCTION__ << "2.11\n";
-      return nullptr;
-    }
-    IdentifierInfo *Ident2 = arg2->Ident;
-    if (!Ident2) {
-      llvm::errs() << __FUNCTION__ << "2.22\n";
-      return nullptr;
-    }
-    llvm::errs() << __FUNCTION__ << " " << Ident2->getName() << " 3.5\n";
-    Vals.push_back(Ident2->getName());
-  }
-  llvm::errs() << __FUNCTION__ << "2.3\n";
   StringRef OptStr = Ident->getName();
   RemarkAttr::OptionType Opt;
   if (OptStr.equals("funct")) {
@@ -60,15 +45,32 @@ RemarkAttr *handleRemarkAttr2(Sema &S, const ParsedAttr &AL) {
     Opt = RemarkAttr::Loop;
   } else if (OptStr.equals("file")) {
     Opt = RemarkAttr::File;
+  } else if (OptStr.equals("conf")) {
+    Opt = RemarkAttr::Conf;
   } else {
     /*S.Diag(AL.getArgAsIdent(0)->Loc, diag::err_attribute_argument_n_type)
       << Opt << ExpectedFunction;*/
-    llvm::errs() << __FUNCTION__ <<  " " << OptStr << " 2.5\n";
+    llvm::errs() << __FUNCTION__ << " " << OptStr << " 2.5\n"; // TODO: diagnostics
     return nullptr;
   }
 
+  if (Opt == RemarkAttr::Conf && AL.getNumArgs() > 3) {
+    llvm::errs() << __FUNCTION__ << " too many args for conf: expected 1 or 2, got " << AL.getNumArgs() - 1
+                 << "\n"; // TODO: diagnostics
+  }
+
+  SmallVector<StringRef, 2> Vals;
+
+  for (size_t i = 1; i < AL.getNumArgs(); i++) {
+    Expr *arg2 = AL.getArgAsExpr(i);
+    if (auto StrLit = dyn_cast<StringLiteral>(arg2)) {
+      Vals.push_back(StrLit->getString());
+    } else {
+      return nullptr;
+    }
+  }
+
   llvm::errs() << __FUNCTION__ << " " << Opt << " 3\n";
-  //StringRef Val = cast<StringLiteral>(arg2)->getString();
   return RemarkAttr::Create(S.Context, Opt, Vals.begin(),
                                 Vals.size(), AL);
 }
