@@ -776,8 +776,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     HandlePragmaAttribute();
     return nullptr;
   case tok::annot_pragma_remark: {
-    llvm::errs() << __func__ << " annot_pragma_remark\n";
-    ProhibitAttributes(attrs); // not sure if needed
+    ProhibitAttributes(attrs);
     AccessSpecifier AS = AS_none;
     return ParsePragmaRemarkHint(AS, attrs);
   }

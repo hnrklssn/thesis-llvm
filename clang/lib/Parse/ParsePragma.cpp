@@ -11,6 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/ASTContext.h"
+#include "clang/Basic/DiagnosticIDs.h"
+#include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/PragmaKinds.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/TokenKinds.h"
@@ -1035,38 +1037,33 @@ struct PragmaRemarkInfo {
 } // namespace
 
 static bool ParseRemarkValue(Preprocessor &PP, Token &Tok, PragmaRemarkInfo &Info) {
-  llvm::errs() << __func__ << "\n";
   SmallVector<Token, 1> ValueList;
   if (!Tok.is(tok::l_paren)) {
+    PP.Diag(Tok, diag::err_expected_lparen_after) << Info.Option.getIdentifierInfo();
     return false;
   }
   PP.Lex(Tok);
   bool ExpectingComma = false;
   while (Tok.isNot(tok::eod)) {
     PP.DumpToken(Tok);
-    llvm::errs() << __func__ << " " << Tok.getName() << "\n";
     if (Tok.is(tok::r_paren)) {
       break;
     }
-    if (Tok.is(tok::comma)) {
-      if (!ExpectingComma) {
-        llvm::errs() << __func__ << " expected string, got "
-                     << Tok.getName() << "\n"; // TODO: diags
-        return false;
-      }
-      ExpectingComma = false;
-    } else if (ExpectingComma) {
-      llvm::errs() << __func__ << " expected ',' or ')', got " << Tok.getName()
-                   << "\n"; // TODO: diags
+    if (ExpectingComma && Tok.isNot(tok::comma)) {
+      PP.Diag(Tok, diag::err_expected_either) << tok::comma << tok::r_paren;
       return false;
-    } else { // lexing string literal, next is comma or left par
-      ExpectingComma = true;
     }
+    if (!ExpectingComma && Tok.isNot(tok::string_literal)) {
+      PP.Diag(Tok, diag::err_expected_string_literal)
+        << 0 << "#pragma clang remark" << SourceRange(Tok.getLocation(), Tok.getEndLoc());
+      return false;
+    }
+    ExpectingComma = !ExpectingComma;
     ValueList.push_back(Tok); // keep commas, otherwise string literals will be concatenated in parsing
     PP.Lex(Tok);
   }
   if (Tok.isNot(tok::r_paren)) {
-    PP.Diag(Tok.getLocation(), diag::err_expected) << tok::r_paren;
+    PP.Diag(Tok, diag::err_expected) << tok::r_paren;
     return false;
   }
   PP.Lex(Tok);
@@ -1080,40 +1077,29 @@ static bool ParseRemarkValue(Preprocessor &PP, Token &Tok, PragmaRemarkInfo &Inf
   return true;
 }
 
-static void dump(const Token &Tok) {
-  llvm::errs() << __func__ << " " << tok::getTokenName(Tok.getKind()) << " '" << Tok.getName()
-               << "'\n";
-}
-
 void PragmaRemarkHandler::HandlePragma(Preprocessor &PP,
                                          PragmaIntroducer Introducer,
                                          Token &Tok) {
-  llvm::errs() << __func__ << "\n";
   Token PragmaName = Tok;
   SmallVector<Token, 1> TokenList;
   PP.DumpToken(PragmaName);
   PP.Lex(Tok);
   PP.DumpToken(Tok);
   if (Tok.isNot(tok::identifier)) {
-    printf("Error, not a identifier token for the option of pragma remark\n");
+    PP.Diag(Tok, diag::err_pragma_remark_invalid_option)
+        /*missing option*/ << 1
+      /*expected conf, file, funct or loop*/ << 2;
     return;
   }
 
   Token Option = Tok;
-  //IdentifierInfo *OptionInfo = Tok.getIdentifierInfo();
-  PP.DumpToken(Option);
   PP.Lex(Tok);
-  PP.DumpToken(Tok);
-  llvm::errs() << __func__ << " " << Tok.getName() << "\n";
 
   auto *Info = new (PP.getPreprocessorAllocator()) PragmaRemarkInfo;
   Info->Option = Option;
   Info->PragmaName = PragmaName;
   if (!ParseRemarkValue(PP, Tok, *Info)) {
-    llvm::errs() << "parseremarkvalue failed\n";
     return;
-  } else {
-    llvm::errs() << "parseremarkvalue succeeded\n";
   }
 
   Token RemarkTok;
@@ -1123,25 +1109,20 @@ void PragmaRemarkHandler::HandlePragma(Preprocessor &PP,
   RemarkTok.setAnnotationEndLoc(Tok.getLocation());
   RemarkTok.setAnnotationValue(static_cast<void *>(Info));
   TokenList.push_back(RemarkTok);
-  dump(RemarkTok);
 
   if (Tok.isNot(tok::eod)) {
-    printf("Error, extra tokens at the end of pragma remark\n");
     PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
-        << "remark pragma";
+        << "clang remark";
     return;
   }
-  llvm::errs() << __func__ << "\n";
   auto TokenArray = std::make_unique<Token[]>(TokenList.size());
   std::copy(TokenList.begin(), TokenList.end(), TokenArray.get());
   PP.EnterTokenStream(std::move(TokenArray), TokenList.size(),
                       /*DisableMacroExpansion=*/false,
                         /*IsReinject=*/false);
-  llvm::errs() << __func__ << "\n";
 }
 
 bool Parser::HandlePragmaRemark(RemarkHint &Hint) {
-  llvm::errs() << __func__ << "\n";
   assert(Tok.is(tok::annot_pragma_remark));
   PragmaRemarkInfo *Info =
       static_cast<PragmaRemarkInfo *>(Tok.getAnnotationValue());
@@ -1154,14 +1135,6 @@ bool Parser::HandlePragmaRemark(RemarkHint &Hint) {
   Hint.OptionLoc = IdentifierLoc::create(
       Actions.Context, Info->Option.getLocation(), OptionInfo);
 
-  bool IsValidOption = llvm::StringSwitch<bool>(OptionInfo->getName())
-    .Cases("file", "funct", "loop", "conf", true)
-    .Default(false);
-
-  if (!IsValidOption) {
-    llvm::errs() << "Invalid option value " << OptionInfo->getName() << "\n";
-  }
-
   llvm::ArrayRef<Token> Toks = Info->Toks;
   PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/false,
                       /*IsReinject=*/false);
@@ -1169,27 +1142,23 @@ bool Parser::HandlePragmaRemark(RemarkHint &Hint) {
   ConsumeAnnotationToken();
 
   while (isTokenStringLiteral()) {
-    llvm::errs() << "tok " << Tok.getName() << "\n";
     ExprResult Result = ParseStringLiteralExpression();
-    if (Result.isInvalid()) {
-      llvm::errs() << __func__ << " invalid string literal " << Tok.getName() << "\n"; // TODO: diags
-    }
+    assert(!Result.isInvalid() && "Invalid string literal in remark pragma");
     Hint.ValueExprs.push_back(Result.get());
     if (Tok.is(tok::comma)) ConsumeToken();
   }
 
-  llvm::errs() << "tok " << Tok.getName() << "\n";
   // Tokens following an error in an ill-formed constant expression will
   // remain in the token stream and must be removed.
   if (Tok.isNot(tok::eof)) {
-    printf("Not EOF\n"); // TODO: diags
+    Diag(Tok, diag::warn_pragma_extra_tokens_at_eol) << "clang remark";
     while (Tok.isNot(tok::eof))
       ConsumeAnyToken();
+    return false;
   }
   ConsumeToken(); // Consume the constant expression eof terminator.
   Hint.Range = SourceRange(Info->PragmaName.getLocation(),
                            Info->Toks.back().getLocation());
-  llvm::errs() << __func__ << "\n";
   return true;
 }
 
@@ -1198,11 +1167,7 @@ Parser::ParsePragmaRemarkHint(AccessSpecifier AS,
                               ParsedAttributesWithRange &Attrs,
                               DeclSpec::TST TagType, Decl *Tag) {
   RemarkHint Hint;
-  llvm::errs() << __PRETTY_FUNCTION__ << "\n";
-  if (!HandlePragmaRemark(Hint)) {
-    llvm::errs() << __PRETTY_FUNCTION__ << " handlepragmaremark failed\n";
-    return nullptr;
-  }
+  if (!HandlePragmaRemark(Hint)) return nullptr;
 
   SmallVector<ArgsUnion, 2> ArgHints;
   ParsedAttributesWithRange TempAttrs(AttrFactory);
@@ -1219,9 +1184,14 @@ Parser::ParsePragmaRemarkHint(AccessSpecifier AS,
     RemarkAttr *Attr = handleRemarkAttr(Actions, TempAttrs.front());
     Actions.ActOnPragmaModuleRemark(Attr);
     return nullptr;
+  } else if (!OptionStr.equals("funct")) {
+    Diag(Hint.OptionLoc->Loc, diag::err_pragma_remark_invalid_option)
+      /*invalid option*/ << 0
+      /*expected conf, file or funct*/ << 0
+      /*actual option*/ << OptionStr;
+    return nullptr;
   }
 
-  // TODO: add diagnostic if option is not "funct"
   Attrs.takeAllFrom(TempAttrs);
   llvm::SmallVector<Decl *, 4> Decls;
   DeclGroupPtrTy Ptr;

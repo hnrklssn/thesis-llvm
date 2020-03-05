@@ -1,6 +1,8 @@
 #include "clang/Sema/RemarkHint.h"
 #include "clang/AST/Attrs.inc"
 #include "clang/Basic/DiagnosticDriver.h"
+#include "clang/Basic/DiagnosticParse.h"
+#include "clang/Basic/DiagnosticSema.h"
 #include "llvm/ADT/StringRef.h"
 //#include "clang/AST/ASTContext.h"
 //#include "clang/Sema/SemaInternal.h"
@@ -14,30 +16,17 @@ using namespace clang;
 //using namespace sema;
 namespace clang {
   RemarkAttr *handleRemarkAttr(Sema &S, const ParsedAttr &AL) {
-  llvm::errs() << __FUNCTION__ << "\n";
-  llvm::errs() << AL.getAttrName()->getName() << "\n";
-  llvm::errs() << AL.getNumArgs() << "\n";
   if (!AL.getNumArgs()) {
-    llvm::errs() << "no args\n";
+    S.Diag(AL.getLoc(), diag::err_pragma_missing_argument) << "clang remark";
+    return nullptr;
   }
-  llvm::errs() << __FUNCTION__ << "1\n";
   if (!AL.isArgIdent(0)) {
     S.Diag(AL.getLoc(), diag::err_attribute_argument_n_type)
         << AL << 1 << AANT_ArgumentIdentifier;
     return nullptr;
   }
 
-
-  llvm::errs() << __FUNCTION__ << "2\n";
-  IdentifierLoc *arg = AL.getArgAsIdent(0);
-  if (!arg) {
-    return nullptr;
-  }
-  IdentifierInfo *Ident = arg->Ident;
-  if (!Ident) {
-    return nullptr;
-  }
-  StringRef OptStr = Ident->getName();
+  StringRef OptStr = AL.getArgAsIdent(0)->Ident->getName();
   RemarkAttr::OptionType Opt;
   if (OptStr.equals("funct")) {
     Opt = RemarkAttr::Funct;
@@ -48,29 +37,27 @@ namespace clang {
   } else if (OptStr.equals("conf")) {
     Opt = RemarkAttr::Conf;
   } else {
-    /*S.Diag(AL.getArgAsIdent(0)->Loc, diag::err_attribute_argument_n_type)
-      << Opt << ExpectedFunction;*/
-    llvm::errs() << __FUNCTION__ << " " << OptStr << " 2.5\n"; // TODO: diagnostics
+    S.Diag(AL.getArgAsIdent(0)->Loc, diag::err_pragma_remark_invalid_option)
+      << 0 << 2 << OptStr;
     return nullptr;
   }
 
   if (Opt == RemarkAttr::Conf && AL.getNumArgs() > 3) {
-    llvm::errs() << __FUNCTION__ << " too many args for conf: expected 1 or 2, got " << AL.getNumArgs() - 1
-                 << "\n"; // TODO: diagnostics
+    auto D = S.Diag(AL.getArgAsIdent(0)->Loc, diag::err_attribute_too_many_arguments)
+      << "#pragma clang remark conf" << 2;
+    for (size_t i = 1; i < AL.getNumArgs(); i++) {
+      D << AL.getArgAsExpr(i)->getSourceRange();
+    }
   }
 
   SmallVector<StringRef, 2> Vals;
 
   for (size_t i = 1; i < AL.getNumArgs(); i++) {
     Expr *arg2 = AL.getArgAsExpr(i);
-    if (auto StrLit = dyn_cast<StringLiteral>(arg2)) {
-      Vals.push_back(StrLit->getString());
-    } else {
-      return nullptr;
-    }
+    assert(isa<StringLiteral>(arg2));
+    Vals.push_back(cast<StringLiteral>(arg2)->getString());
   }
 
-  llvm::errs() << __FUNCTION__ << " " << Opt << " 3\n";
   return RemarkAttr::Create(S.Context, Opt, Vals.begin(),
                                 Vals.size(), AL);
 }

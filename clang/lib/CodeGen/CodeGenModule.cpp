@@ -5939,6 +5939,7 @@ void CodeGenModule::EmitModuleRemarkMetadata() {
   auto NamedMD = TheModule.getOrInsertNamedMetadata("llvm.remarks");
   for (auto Attr : Context.getModuleRemarkAttrs()) {
     auto RAttr = cast<RemarkAttr>(Attr);
+    if (RAttr->getOption() != RemarkAttr::File) continue;
     llvm::MDNode *N = createRemarkMetadata(getLLVMContext(), *RAttr);
     NamedMD->addOperand(N);
   }
