@@ -276,8 +276,8 @@ static bool metadataEnablesOptRemark(StringRef PassName, MDNode *MD,
 
     for (auto &MDOp : MD->operands()) {
       auto MDSOp = cast<MDString>(MDOp.get());
-      if (MDSOp->getString().equals(PassName)) // TODO: perform regex match to match flag behaviour
-        return true;
+      Regex Pattern(MDSOp->getString());
+      if (Pattern.isValid() && Pattern.match(PassName)) return true;
     }
   }
 
