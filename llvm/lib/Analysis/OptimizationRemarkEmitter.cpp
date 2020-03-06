@@ -79,17 +79,8 @@ void OptimizationRemarkEmitter::computeHotness(
 }
 
 MDNode *OptimizationRemarkEmitter::computeLoopID(const Value *V) const {
-  if (!LI)
-    errs() << __FUNCTION__ << " LI null\n";
-  return nullptr;
-  if (!V) {
-    errs() << __FUNCTION__ << " BB null\n";
+  if (!LI || !V || LI->empty())
     return nullptr;
-  }
-  if (LI->empty()) {
-    errs() << __FUNCTION__ << " LI empty\n";
-    return nullptr;
-  }
 
   Loop *L = LI->getLoopFor(cast<BasicBlock>(V));
   if (!L)
@@ -130,7 +121,11 @@ void OptimizationRemarkEmitter::getAllRemarkMetadata(SmallVectorImpl<MDNode*> &M
     if (!N) continue;
     addRemarkMetadata(MDs, N);
   }
-  // const Module *M = F->getParent(); TODO: file level metadata
+  const Module *M = F->getParent();
+  NamedMDNode *Named = M->getNamedMetadata("llvm.remarks");
+  for (auto N : Named->operands()) {
+    addRemarkMetadata(MDs, N);
+  }
 }
 
 bool OptimizationRemarkEmitter::isAnyRemarkEnabledByMetadata() const {
