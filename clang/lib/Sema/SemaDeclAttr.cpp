@@ -23,6 +23,7 @@
 #include "clang/AST/Mangle.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/DiagnosticSema.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
@@ -4918,17 +4919,11 @@ static void handleArmMveAliasAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
 }
 
 static void handleRemarkAttrFunc(Sema &S, Decl *D, const ParsedAttr &AL) {
-  llvm::errs() << __FUNCTION__ << "\n";
   RemarkAttr *Attr = handleRemarkAttr(S, AL);
   if (!Attr)
     return;
-  if (Attr->getOption() != RemarkAttr::Funct) {
-    // TODO: emit diagnostic here
-    llvm::errs() << __FUNCTION__ << " 4 " << Attr->getOption() << "\n";
-    return;
-  }
+  assert(Attr->getOption() == RemarkAttr::Funct);
   D->addAttr(Attr);
-  llvm::errs() << __FUNCTION__ << " 6\n";
 }
 
 //===----------------------------------------------------------------------===//

@@ -23,7 +23,6 @@
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
-#include "clang/AST/Attrs.inc"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/StmtCXX.h"
@@ -2466,9 +2465,7 @@ llvm::DebugLoc CodeGenFunction::SourceLocToDebugLoc(SourceLocation Location) {
 }
 void CodeGenFunction::AddRemarkMetadata(llvm::Function *Fn,
                                         const RemarkAttr *RemarkAttr) {
-  llvm::errs() << "addRemarkMetadata\n";
   assert(RemarkAttr->getOption() == RemarkAttr::Funct);
   llvm::MDNode *N = createRemarkMetadata(Fn->getContext(), *RemarkAttr);
   Fn->setMetadata("llvm.remarks", N);
-  Fn->getMetadata("llvm.remarks")->dump();
 }

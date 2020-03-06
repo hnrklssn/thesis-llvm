@@ -13,14 +13,11 @@
 
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/Attr.h"
-#include "clang/AST/Attrs.inc"
 #include "clang/AST/Expr.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/SemaInternal.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringSwitch.h"
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -808,7 +805,6 @@ void Sema::ActOnPragmaAttributePop(SourceLocation PragmaLoc,
 }
 
 void Sema::AddPragmaAttributes(Scope *S, Decl *D) {
-  llvm::errs() << __FUNCTION__ << "\n";
   if (PragmaAttributeStack.empty())
     return;
   for (auto &Group : PragmaAttributeStack) {

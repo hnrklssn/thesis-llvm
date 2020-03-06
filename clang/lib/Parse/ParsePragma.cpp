@@ -1045,7 +1045,6 @@ static bool ParseRemarkValue(Preprocessor &PP, Token &Tok, PragmaRemarkInfo &Inf
   PP.Lex(Tok);
   bool ExpectingComma = false;
   while (Tok.isNot(tok::eod)) {
-    PP.DumpToken(Tok);
     if (Tok.is(tok::r_paren)) {
       break;
     }
@@ -1082,9 +1081,7 @@ void PragmaRemarkHandler::HandlePragma(Preprocessor &PP,
                                          Token &Tok) {
   Token PragmaName = Tok;
   SmallVector<Token, 1> TokenList;
-  PP.DumpToken(PragmaName);
   PP.Lex(Tok);
-  PP.DumpToken(Tok);
   if (Tok.isNot(tok::identifier)) {
     PP.Diag(Tok, diag::err_pragma_remark_invalid_option)
         /*missing option*/ << 1
