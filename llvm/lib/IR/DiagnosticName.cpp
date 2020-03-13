@@ -11,6 +11,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/IR/DiagnosticName.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Use.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -23,7 +28,9 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/Support/ErrorHandling.h"
 #include <deque>
+#include <string>
 
 
 
@@ -34,7 +41,8 @@ using namespace llvm;
 
 namespace {
   // forward declaration
-  std::string getOriginalName(const Value* V, DIType **FinalType);
+  std::string getOriginalName(const Value* V, const DIType **FinalType);
+
   void printAllMetadata(const Instruction &I) {
     errs() << "metadata\n";
     if(I.hasMetadata()) {
@@ -63,8 +71,8 @@ namespace {
 
   }
 
-  void printIntrinsic(IntrinsicInst *I) {
-    if(DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(I)) {
+  void printIntrinsic(const IntrinsicInst *I) {
+    if(const DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(I)) {
       LLVM_DEBUG(errs() << "address: " << *DDI->getAddress() << "\n");
       LLVM_DEBUG(errs() << "location: " << *DDI->getVariableLocation() << " endloc\n");
       LLVM_DEBUG(DDI->getVariable()->print(errs(), nullptr, true));
@@ -78,7 +86,7 @@ namespace {
       LLVM_DEBUG(errs() << "\n");
       LLVM_DEBUG(DDI->getRawExpression()->print(errs(), nullptr, true));
       LLVM_DEBUG(errs() << "\n");
-    } else if(DbgValueInst *DDI = dyn_cast<DbgValueInst >(I)) {
+    } else if(const DbgValueInst *DDI = dyn_cast<DbgValueInst >(I)) {
       LLVM_DEBUG(errs() << "DBGVALUE\n");
       //errs() << "address: " << *DDI->getAddress() << "\n";
       LLVM_DEBUG(errs() << "location: " << *DDI->getVariableLocation() << " endloc\n");
@@ -101,7 +109,7 @@ namespace {
       LLVM_DEBUG(errs() << "uselmao: ");
       LLVM_DEBUG(U->print(errs()));
       LLVM_DEBUG(errs() << "\n");
-      if(IntrinsicInst *II = dyn_cast<IntrinsicInst>(U)) {
+      if(const IntrinsicInst *II = dyn_cast<IntrinsicInst>(U)) {
         LLVM_DEBUG(errs() << "--next intrinsic--\n");
         printIntrinsic(II);
       }
@@ -109,7 +117,9 @@ namespace {
 
   }
 
-  std::string getFragmentTypeName(DIType *T, int64_t Offset, DIType **FinalType, std::string Sep = ".") {
+  std::string getFragmentTypeName(const DIType *const T, int64_t Offset,
+                                  const DIType **const FinalType,
+                                  std::string Sep = ".") {
     if (!T) return "fragment-type-null";
     if (auto Comp = dyn_cast<DICompositeType>(T)) {
       DIDerivedType *tmpT = nullptr;
@@ -122,7 +132,9 @@ namespace {
           }
           tmpT = E2;
         } else {
-          errs() << "Non derived type as struct member? Should not happen\n";
+          errs() << "T: " << *T << "\n";
+          errs() << "E: " << *E << "\n";
+          llvm_unreachable("Non derived type as struct member");
         }
       }
       if (!tmpT)
@@ -142,7 +154,7 @@ namespace {
   }
 
   /// Get rest of name based on the type of the base value, and the offset.
-  std::string getFragmentTypeName(DIType *T, int64_t *Offsets_begin, int64_t *Offsets_end, DIType **FinalType, std::string Sep = ".") {
+  std::string getFragmentTypeName(const DIType *T, const int64_t *Offsets_begin, const int64_t *Offsets_end, const DIType **FinalType, std::string Sep = ".") {
     int64_t Offset = -1;
     if (!T) return "fragment-type-null";
     LLVM_DEBUG(errs() << "getFragmentTypeName: " << *T << "\n");
@@ -209,7 +221,7 @@ namespace {
     return Offsets_begin;
   }
 
-  std::string getNameFromDbgVariableIntrinsic(DbgVariableIntrinsic *VI, DIType **FinalType = nullptr) {
+  std::string getNameFromDbgVariableIntrinsic(const DbgVariableIntrinsic *VI, const DIType **const FinalType) {
     DILocalVariable *Val = VI->getVariable();
     DIType *Type = Val->getType();
     DIExpression *Expr = VI->getExpression();
@@ -254,6 +266,10 @@ namespace {
     if (auto *L = ValueAsMetadata::getIfExists(V)) { // used to be LocalAsMetadata, but that will crash if passed a constant value
       if (auto *MDV = MetadataAsValue::getIfExists(V->getContext(), L)) {
         for (User *U : MDV->users()) {
+          if (auto GV = dyn_cast<GlobalValue>(MDV)) {
+            LLVM_DEBUG(errs() << __FUNCTION__ << " GV: " << *GV << "\n");
+            LLVM_DEBUG(errs() << __FUNCTION__ << " U: " << *U << "\n");
+          }
           if (DbgVariableIntrinsic *DII = dyn_cast<DbgVariableIntrinsic>(U))
             DbgUsers.push_back(DII);
         }
@@ -288,9 +304,9 @@ namespace {
 
   // TODO check which string type is appropriate here
   /// Helper function for naming a pointer relative to some other base pointer
-  std::string getOriginalRelativePointerName(const Value *V, std::string &ArrayIdx, SmallVectorImpl<int64_t> &StructIndices, DIType **FinalType = nullptr) {
+  std::string getOriginalRelativePointerName(const Value *V, std::string &ArrayIdx, SmallVectorImpl<int64_t> &StructIndices, const DIType **FinalType) {
     // Use the value V to name this pointer prefix, and make it return metadata for accessing debug symbols for our pointer
-    DIType *T = nullptr;
+    const DIType *T = nullptr;
     LLVM_DEBUG(errs() << "getting pointer prefix for " << *V << "\n");
     std::string ptrName = getOriginalName(V, &T);
     LLVM_DEBUG(errs() << "prefix: " << ptrName << " arrayidx: " << ArrayIdx << "\n");
@@ -305,7 +321,7 @@ namespace {
 
   /// This function sets FinalType to the type of the value when dereferenced due to DIDerivedType pointer types
   /// not always being available for subfields. If FinalType is needed, be aware that this is inconsistent with other similar functions.
-  std::string getOriginalPointerName(const GetElementPtrInst *GEP, DIType **FinalType = nullptr) {
+  std::string getOriginalPointerName(const GetElementPtrInst *const GEP, const DIType **const FinalType) {
     LLVM_DEBUG(errs() << "GEP!\n");
     LLVM_DEBUG(GEP->dump());
     auto OP = GEP->getPointerOperand();
@@ -330,7 +346,7 @@ namespace {
     SmallVector<int64_t, 2> Indices;
     std::string name = "";
     const Use *idx_last_const = getConstOffsets(GEP->idx_begin() + 1, GEP->idx_end(), Indices); // skip first offset, it doesn't matter if it's constant
-    DIType *T = nullptr;
+    const DIType *T = nullptr;
     if (auto LI = dyn_cast<LoadInst>(OP)) {
       // This means our pointer originated in the dereference of another pointer
       name += getOriginalRelativePointerName(LI->getPointerOperand(), ArrayIdx, Indices, &T);
@@ -377,7 +393,7 @@ namespace {
       Indices.clear(); // collect potential remaining constant indices
       idx_last_const = getConstOffsets(idx_last_const + 1, GEP->idx_end(), Indices);
 
-      DIType *T2 = nullptr; // avoid aliasing T
+      const DIType *T2 = nullptr; // avoid aliasing T
       name += getFragmentTypeName(T, Indices.begin(), Indices.end(), &T2);
       T = T2;
     }
@@ -388,7 +404,7 @@ namespace {
 
   /// If this value is part of an use-def chain with a value that has a dbg variable intrinsic, name this value after that value. Only traverses backwards.
   /// Drawback is that operations may be skipped. If V is %i.next = phi [0, i + 1], we will name it "i", not "i + 1".
-  std::string getOriginalInductionVariableName(const Value *V, DIType **FinalType) {
+  std::string getOriginalInductionVariableName(const Value *V, const DIType **FinalType) {
     SmallSet<const Value *, 10> Visited;
     // want BFS under the assumption that the names of values fewer hops away are more likely to represent this variable well
     std::deque<const Value *> Queue;
@@ -397,7 +413,7 @@ namespace {
       V = Queue.front();
       Queue.pop_front();
       Visited.insert(V);
-      DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
+      const DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
       if (DVI) return getOriginalName(V);
 
       if (auto U = dyn_cast<User>(V)) {
@@ -410,7 +426,101 @@ namespace {
     return "";
   }
 
-  std::string getOriginalPhiName(const PHINode *PHI, DIType **FinalType) {
+  std::string getOriginalStoreName(const StoreInst *ST, const DIType **FinalType) {
+    std::string PtrName = getOriginalName(ST->getPointerOperand(), nullptr);
+    std::string ValueName = getOriginalName(ST->getValueOperand(), FinalType);
+    return "*(" + PtrName + ") = " + ValueName;
+  }
+
+  std::string getOriginalCallName(const CallBase *Call, const DIType **FinalType) {
+    std::string FuncName = Call->getName();
+    std::string Name = FuncName + "(";
+    User::const_op_iterator end;
+    User::const_op_iterator it;
+    for (it = Call->arg_begin(), end = Call->arg_end(); it != end; it++) {
+      Name += getOriginalName(it->get());
+      if (end - it > 1)
+        Name += ", ";
+    }
+    Name += ")";
+    return Name;
+  }
+
+  std::string getOriginalSwitchName(const SwitchInst *Switch, const DIType **FinalType) {
+    std::string CondName = getOriginalName(Switch->getCondition());
+    std::string Name = "switch (" + CondName + ") {\n";
+    User::const_op_iterator end;
+    User::const_op_iterator it;
+    for (auto Case : Switch->cases()) {
+      Name += "case " + getOriginalName(Case.getCaseValue()) + ":\n";
+      Name += getOriginalName(Case.getCaseSuccessor());
+    }
+    Name += "}";
+    return Name;
+  }
+
+  std::string getOriginalCmpName(const CmpInst *Cmp, const DIType **FinalType) {
+    std::string name = "<unknown-cmp>";
+    std::string Op1 = getOriginalName(Cmp->getOperand(0));
+    std::string Op2 = getOriginalName(Cmp->getOperand(1));
+    switch (Cmp->getPredicate()) {
+    case CmpInst::FCMP_OEQ:
+    case CmpInst::FCMP_UEQ:
+    case CmpInst::ICMP_EQ:
+      name = "==";
+      break;
+    case CmpInst::FCMP_OGT:
+    case CmpInst::FCMP_UGT:
+    case CmpInst::ICMP_UGT:
+    case CmpInst::ICMP_SGT:
+      name = ">";
+      break;
+    case CmpInst::FCMP_OGE:
+    case CmpInst::FCMP_UGE:
+    case CmpInst::ICMP_UGE:
+    case CmpInst::ICMP_SGE:
+      name = ">=";
+      break;
+    case CmpInst::FCMP_OLT:
+    case CmpInst::FCMP_ULT:
+    case CmpInst::ICMP_ULT:
+    case CmpInst::ICMP_SLT:
+      name = "<";
+      break;
+    case CmpInst::FCMP_OLE:
+    case CmpInst::FCMP_ULE:
+    case CmpInst::ICMP_ULE:
+    case CmpInst::ICMP_SLE:
+      name = "<=";
+      break;
+    case CmpInst::FCMP_ONE:
+    case CmpInst::FCMP_UNE:
+    case CmpInst::ICMP_NE:
+      name = "!=";
+      break;
+    case CmpInst::FCMP_FALSE:
+      return "FALSE";
+    case CmpInst::FCMP_TRUE:
+      return "TRUE";
+    case CmpInst::BAD_FCMP_PREDICATE:
+    case CmpInst::BAD_ICMP_PREDICATE:
+      llvm_unreachable("invalid cmp inst");
+      break;
+    case CmpInst::FCMP_UNO:
+      return "isnan(" + Op1 + ") | isnan(" + Op2 + ")";
+    case CmpInst::FCMP_ORD:
+      return "!(isnan(" + Op1 + ") | isnan(" + Op2 + "))";
+    }
+    return Op1 + " " + name + " " + Op2;
+  }
+
+  std::string getOriginalSelectName(const SelectInst *Select, const DIType **FinalType) {
+    return getOriginalName(Select->getCondition())
+      + " ? " + getOriginalName(Select->getTrueValue())
+      + " : " + getOriginalName(Select->getFalseValue());
+  }
+
+  std::string getOriginalPhiName(const PHINode *PHI, const DIType **FinalType) {
     // assume induction variable structure, and name after first DVI found
     std::string name = getOriginalInductionVariableName(PHI, FinalType);
     LLVM_DEBUG(errs() << "indvar name: " << name << "\n");
@@ -421,62 +531,61 @@ namespace {
     return "<unknown-phi %" + PHI->getName().str() + ">";
   }
 
-  std::string getOriginalBinOpName(const BinaryOperator* BO, DIType **FinalType) {
+  std::string getOriginalBranchName(const BranchInst *Br, const DIType **FinalType) {
+    if (Br->isUnconditional()) {
+      return "goto " + Br->getSuccessor(0)->getName().str();
+    }
+    return "if (" + getOriginalName(Br->getCondition()) + ") goto " + Br->getSuccessor(0)->getName().str()
+      + "; else goto " + Br->getSuccessor(1)->getName().str() + ";";
+  }
+
+  std::string getOriginalBinOpName(const BinaryOperator* BO, const DIType **FinalType) {
     LLVM_DEBUG(errs() << "bopname: " << *BO << " name: " << BO->getName() << " opcode name: " << BO->getOpcodeName() << "\n");
-    std::string name = "<unknown-binop>";
+    std::string Name = "<unknown-binop>";
     switch (BO->getOpcode()) {
     case Instruction::Add: case Instruction::FAdd:
-      name = "+";
+      Name = "+";
       break;
     case Instruction::Sub: case Instruction::FSub:
-      name = "-";
+      Name = "-";
       break;
     case Instruction::Mul: case Instruction::FMul:
-      name = "*";
+      Name = "*";
       break;
     case Instruction::UDiv: case Instruction::SDiv:
-      name = "/";
+      Name = "/";
       break;
     case Instruction::URem: case Instruction::SRem: case Instruction::FRem:
-      name = "%";
+      Name = "%";
       break;
     case Instruction::Shl:
-      name = "<<";
+      Name = "<<";
       break;
     case Instruction::LShr: case Instruction::AShr:
-      name = ">>";
+      Name = ">>";
       break;
     case Instruction::And:
-      name = "&";
+      Name = "&";
       break;
     case Instruction::Or:
-      name = "|";
+      Name = "|";
       break;
     case Instruction::Xor:
-      name = "^";
+      Name = "^";
       break;
     default:
       break;
     }
-    return getOriginalName(BO->getOperand(0)) + " " + name + " " + getOriginalName(BO->getOperand(1));
+    return getOriginalName(BO->getOperand(0)) + " " + Name + " " + getOriginalName(BO->getOperand(1));
   }
 
-   /// Reconstruct the original name of a value from debug symbols. Output string is in C syntax no matter the source language.
-   /// If FinalType is given, it is set to point to the DIType of the value EXCEPT if the value is a GetElementPtrInst, where it will return the DIType of the value when dereferenced.
-  std::string getOriginalName(const Value* V, DIType **FinalType) {
-    assert(V != nullptr);
-    LLVM_DEBUG(errs() << "gON: " << *V << "\n");
-
-    DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
-    if (DVI) { // This is the gold standard, it will tell us the actual source name
-      return getNameFromDbgVariableIntrinsic(DVI, FinalType);
-    }
-    LLVM_DEBUG(errs() << "gON: no DVI" << *V << "\n");
-
-    if (auto GEP = dyn_cast<GetElementPtrInst>(V)) {
+  std::string getOriginalInstructionName(const Instruction *const I,
+                                         const DIType **const FinalType) {
+    if (auto GEP = dyn_cast<GetElementPtrInst>(I)) {
       return getOriginalPointerName(GEP, FinalType);
     }
-    if (auto UI = dyn_cast<UnaryInstruction>(V)) { // most unary instructions don't really alter the value that much
+    if (auto UI = dyn_cast<UnaryInstruction>(I)) {
+      // most unary instructions don't  really alter the value that much
       // so our default here is to just use the name of the operand.
       const Value *OP = UI->getOperand(0);
       std::string name = getOriginalName(OP, FinalType); // TODO Figure out if this could ever cause an infinite loop in welformed programs. My guess is no.
@@ -491,17 +600,123 @@ namespace {
       }
       return name;
     }
-    if (auto C = dyn_cast<ConstantInt>(V)) {
-      return std::to_string(C->getZExtValue());
-    }
-    if (auto GV = dyn_cast<GlobalValue>(V)) {
-      return GV->getName();
-    }
-    if (auto PHI = dyn_cast<PHINode>(V)) {
+    if (auto PHI = dyn_cast<PHINode>(I)) {
       return getOriginalPhiName(PHI, FinalType);
     }
-    if (auto BOp = dyn_cast<BinaryOperator>(V))
+    if (auto BOp = dyn_cast<BinaryOperator>(I))
       return getOriginalBinOpName(BOp, FinalType);
+    if (auto ST = dyn_cast<StoreInst>(I))
+      return getOriginalStoreName(ST, FinalType);
+    if (auto Call = dyn_cast<CallBase>(I))
+      return getOriginalCallName(Call, FinalType);
+    if (auto Cmp = dyn_cast<CmpInst>(I))
+      return getOriginalCmpName(Cmp, FinalType);
+    if (auto Switch = dyn_cast<SwitchInst>(I)) return getOriginalSwitchName(Switch, FinalType);
+    if (auto Select = dyn_cast<SelectInst>(I))
+      return getOriginalSelectName(Select, FinalType);
+    if (auto Br = dyn_cast<BranchInst>(I)) {
+      return getOriginalBranchName(Br, FinalType);
+    };
+    errs() << "unhandled instruction type: " << *I << "\n";
+    return "";
+  }
+
+  std::string getOriginalConstantName(const Constant *C,
+                                      const DIType **const FinalType) {
+    if (auto Addr = dyn_cast<BlockAddress>(C))
+      return "BB-addr: " + Addr->getName().str();
+    if (auto Aggr = dyn_cast<ConstantAggregate>(C)) {
+      unsigned NumElems = Aggr->getNumOperands();
+      std::string Name;
+      for (unsigned i = 0; i < NumElems; i++) {
+        Name += getOriginalConstantName(Aggr->getOperand(i), nullptr);
+        if (NumElems - i > 1)
+          Name += ", ";
+      }
+      return "{" + Name + "}";
+    }
+    if (auto CAZ = dyn_cast<ConstantAggregateZero>(C)) {
+      return "CAZ"; // TODO: implement @henrik
+    }
+    if (auto CDS = dyn_cast<ConstantDataSequential>(C)) {
+      if (CDS->isString()) {
+        LLVM_DEBUG(errs() << __FUNCTION__ << " constant string: " << *C << " "
+                          << CDS->getAsCString() << "\n");
+        return CDS->getAsString();
+      }
+      std::string Name;
+      unsigned NumElems = CDS->getNumElements();
+      for (unsigned i = 0; i < NumElems; i++) {
+        Name += getOriginalConstantName(CDS->getElementAsConstant(i), nullptr);
+        if (NumElems - i > 1)
+          Name += ", ";
+      }
+      if (CDS->getType()->isVectorTy())
+        return "Vec{" + Name + "}";
+      return "{" + Name + "}";
+    }
+    if (auto CFp = dyn_cast<ConstantFP>(C)) {
+      return std::to_string(CFp->getValueAPF().convertToDouble());
+    }
+    if (auto CI = dyn_cast<ConstantInt>(C)) {
+      return std::to_string(CI->getZExtValue());
+    }
+    if (isa<ConstantPointerNull>(C)) {
+      return "null";
+    }
+    if (isa<ConstantTokenNone>(C)) {
+      return "none";
+    }
+    if (isa<UndefValue>(C)) {
+      return "undefined";
+    }
+    if (auto CExpr = dyn_cast<ConstantExpr>(C)) {
+      Instruction *I = CExpr->getAsInstruction();
+      std::string ConstExprStr = getOriginalInstructionName(I, FinalType);
+      I->deleteValue();
+      return ConstExprStr;
+    }
+    if (auto GV = dyn_cast<GlobalValue>(C)) {
+      return GV->getName();
+    }
+    errs() << "unhandled constant type: " << *C << "\n";
+    return "";
+  }
+
+  /// Reconstruct the original name of a value from debug symbols. Output string
+  /// is in C syntax no matter the source language. If FinalType is given, it is
+  /// set to point to the DIType of the value EXCEPT if the value is a
+  /// GetElementPtrInst, where it will return the DIType of the value when
+  /// dereferenced.
+  std::string getOriginalName(const Value* V, const DIType **const FinalType) {
+    assert(V != nullptr);
+    LLVM_DEBUG(errs() << "gON: " << *V << "\n");
+
+    DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
+    if (DVI) { // This is the gold standard, it will tell us the actual source name
+      return getNameFromDbgVariableIntrinsic(DVI, FinalType);
+    }
+    LLVM_DEBUG(errs() << "gON: no DVI" << *V << "\n");
+
+    if (auto I = dyn_cast<Instruction>(V))
+      return getOriginalInstructionName(I, FinalType);
+    if (auto C = dyn_cast<Constant>(V))
+      return getOriginalConstantName(C, FinalType);
+    if (auto BB = dyn_cast<BasicBlock>(V)) {
+      std::string Name = "BB{\n";
+      Name += BB->getName();
+      Name += ":\n";
+      for (auto &I : *BB) {
+        if (isa<DbgInfoIntrinsic>(I)) continue; // these intrinsics are essentially metadata, not code
+        Name += getOriginalInstructionName(&I, nullptr);
+        Name += "\n";
+      }
+      Name += "}";
+      return Name;
+    }
+    if (auto Arg = dyn_cast<Argument>(V)) {
+      return Arg->getName();
+    }
     errs() << "unhandled value type: " << *V << "\n";
     return "";
   }

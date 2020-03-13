@@ -837,7 +837,7 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
   R << "load " << NV("loadinst", LI) << " of pointer " << NV("pointer", LI->getPointerOperand()) << " of type " << NV("Type", LI->getType()) << " not eliminated";
   int i = 0;
   for (auto *U2 : LI->users()) {
-	  errs() << "use " << i << "\n";
+	  //errs() << "use " << i << "\n"; TODO: fix @henrik
 	  R << NV("use" + std::to_string(i++), U2);
   }
   R << setExtraArgs();
