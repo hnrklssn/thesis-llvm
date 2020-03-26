@@ -23,35 +23,34 @@ static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
 // A help message for this specific tool can be added afterwards.
 static cl::extrahelp MoreHelp("\nMore help text...\n");
 
-StatementMatcher LoopMatcher = forStmt().bind("forLoop");
+StatementMatcher ForMatcher = forStmt().bind("forLoop");
+StatementMatcher WhileMatcher = whileStmt().bind("whileLoop");
 DeclarationMatcher FunctionMatcher = functionDecl().bind("functionDecl");
 
-class LoopPrinter : public MatchFinder::MatchCallback {
+class Printer : public MatchFinder::MatchCallback {
 public:
   virtual void run(const MatchFinder::MatchResult &Result) {
     ASTContext *Context = Result.Context;
     const ForStmt *FS = Result.Nodes.getNodeAs<ForStmt>("forLoop");
-
-    if (!FS ||
-        !Context->getSourceManager().isWrittenInMainFile(FS->getForLoc()))
-      return;
-
-    FS->getSourceRange().dump(Context->getSourceManager());
-  }
-};
-
-class FunctionPrinter : public MatchFinder::MatchCallback {
-public:
-  virtual void run(const MatchFinder::MatchResult &Result) {
-    ASTContext *Context = Result.Context;
+    const WhileStmt *WS = Result.Nodes.getNodeAs<WhileStmt>("whileLoop");
     const FunctionDecl *FD =
         Result.Nodes.getNodeAs<FunctionDecl>("functionDecl");
+    SourceManager &SM = Context->getSourceManager();
 
-    if (!FD ||
-        !Context->getSourceManager().isWrittenInMainFile(FD->getLocation()))
+    printStmtIfNotNull("ForStmt;", FS, SM);
+    printStmtIfNotNull("WhileStmt;", WS, SM);
+    printStmtIfNotNull("FuncDecl;", FD, SM);
+  }
+
+private:
+  template <class T>
+  void printStmtIfNotNull(std::string name, const T *Node,
+                          SourceManager &SourceM) {
+    if (!Node)
       return;
 
-    FD->getSourceRange().dump(Context->getSourceManager());
+    Node->getSourceRange().print(llvm::outs() << name, SourceM);
+    llvm::outs() << "\n";
   }
 };
 
@@ -60,11 +59,11 @@ int main(int argc, const char **argv) {
   ClangTool Tool(OptionsParser.getCompilations(),
                  OptionsParser.getSourcePathList());
 
-  LoopPrinter Printer;
-  FunctionPrinter Printer2;
+  Printer Printer;
   MatchFinder Finder;
-  Finder.addMatcher(LoopMatcher, &Printer);
-  Finder.addMatcher(FunctionMatcher, &Printer2);
+  Finder.addMatcher(FunctionMatcher, &Printer);
+  Finder.addMatcher(WhileMatcher, &Printer);
+  Finder.addMatcher(ForMatcher, &Printer);
 
   return Tool.run(newFrontendActionFactory(&Finder).get());
 }
