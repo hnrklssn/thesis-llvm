@@ -49,6 +49,9 @@ private:
     if (!Node)
       return;
 
+    if (!SourceM.isWrittenInMainFile(Node->getBeginLoc()))
+      return;
+
     Node->getSourceRange().print(llvm::outs() << name, SourceM);
     llvm::outs() << "\n";
   }
