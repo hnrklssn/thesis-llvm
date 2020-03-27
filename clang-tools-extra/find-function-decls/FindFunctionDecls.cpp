@@ -25,6 +25,7 @@ static cl::extrahelp MoreHelp("\nMore help text...\n");
 
 StatementMatcher ForMatcher = forStmt().bind("forLoop");
 StatementMatcher WhileMatcher = whileStmt().bind("whileLoop");
+StatementMatcher DoMatcher = doStmt().bind("doLoop");
 DeclarationMatcher FunctionMatcher = functionDecl().bind("functionDecl");
 
 class Printer : public MatchFinder::MatchCallback {
@@ -33,12 +34,14 @@ public:
     ASTContext *Context = Result.Context;
     const ForStmt *FS = Result.Nodes.getNodeAs<ForStmt>("forLoop");
     const WhileStmt *WS = Result.Nodes.getNodeAs<WhileStmt>("whileLoop");
+    const DoStmt *DS = Result.Nodes.getNodeAs<DoStmt>("doLoop");
     const FunctionDecl *FD =
         Result.Nodes.getNodeAs<FunctionDecl>("functionDecl");
     SourceManager &SM = Context->getSourceManager();
 
     printStmtIfNotNull("ForStmt;", FS, SM);
     printStmtIfNotNull("WhileStmt;", WS, SM);
+    printStmtIfNotNull("DoStmt;", DS, SM);
     printStmtIfNotNull("FuncDecl;", FD, SM);
   }
 
@@ -67,6 +70,7 @@ int main(int argc, const char **argv) {
   Finder.addMatcher(FunctionMatcher, &Printer);
   Finder.addMatcher(WhileMatcher, &Printer);
   Finder.addMatcher(ForMatcher, &Printer);
+  Finder.addMatcher(DoMatcher, &Printer);
 
   return Tool.run(newFrontendActionFactory(&Finder).get());
 }
