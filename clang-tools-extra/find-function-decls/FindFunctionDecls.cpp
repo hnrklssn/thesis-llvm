@@ -24,6 +24,7 @@ static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
 static cl::extrahelp MoreHelp("\nMore help text...\n");
 
 StatementMatcher ForMatcher = forStmt().bind("forLoop");
+StatementMatcher ForRangeMatcher = cxxForRangeStmt().bind("forRangeLoop");
 StatementMatcher WhileMatcher = whileStmt().bind("whileLoop");
 StatementMatcher DoMatcher = doStmt().bind("doLoop");
 DeclarationMatcher FunctionMatcher = functionDecl().bind("functionDecl");
@@ -33,12 +34,15 @@ public:
   virtual void run(const MatchFinder::MatchResult &Result) {
     ASTContext *Context = Result.Context;
     const ForStmt *FS = Result.Nodes.getNodeAs<ForStmt>("forLoop");
+    const CXXForRangeStmt *FRS =
+        Result.Nodes.getNodeAs<CXXForRangeStmt>("forRangeLoop");
     const WhileStmt *WS = Result.Nodes.getNodeAs<WhileStmt>("whileLoop");
     const DoStmt *DS = Result.Nodes.getNodeAs<DoStmt>("doLoop");
     const FunctionDecl *FD =
         Result.Nodes.getNodeAs<FunctionDecl>("functionDecl");
     SourceManager &SM = Context->getSourceManager();
 
+    printStmtIfNotNull("ForRangeStmt;", FRS, SM);
     printStmtIfNotNull("ForStmt;", FS, SM);
     printStmtIfNotNull("WhileStmt;", WS, SM);
     printStmtIfNotNull("DoStmt;", DS, SM);
@@ -70,6 +74,7 @@ int main(int argc, const char **argv) {
   Finder.addMatcher(FunctionMatcher, &Printer);
   Finder.addMatcher(WhileMatcher, &Printer);
   Finder.addMatcher(ForMatcher, &Printer);
+  Finder.addMatcher(ForRangeMatcher, &Printer);
   Finder.addMatcher(DoMatcher, &Printer);
 
   return Tool.run(newFrontendActionFactory(&Finder).get());
