@@ -20,6 +20,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/DiagnosticName.h"
 #include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/YAMLTraits.h"
 #include <algorithm>
@@ -616,12 +617,12 @@ public:
   DiagnosticInfoIROptimization(enum DiagnosticKind Kind,
                                enum DiagnosticSeverity Severity,
                                const char *PassName, StringRef RemarkName,
-                               const Function &Fn,
+                               const Function &Fn, Module *M,
                                const DiagnosticLocation &Loc,
                                const Value *CodeRegion = nullptr)
       : DiagnosticInfoOptimizationBase(Kind, Severity, PassName, RemarkName, Fn,
                                        Loc),
-        CodeRegion(CodeRegion) {}
+        CodeRegion(CodeRegion), DNG(DiagnosticNameGenerator::create(M)) {} // TODO @henrik: create DiagnosticNameArgs
 
   /// This is ctor variant allows a pass to build an optimization remark
   /// from an existing remark.
@@ -635,7 +636,7 @@ public:
       : DiagnosticInfoOptimizationBase(
             (DiagnosticKind)Orig.getKind(), Orig.getSeverity(), PassName,
             Orig.RemarkName, Orig.getFunction(), Orig.getLocation()),
-        CodeRegion(Orig.getCodeRegion()) {
+        CodeRegion(Orig.getCodeRegion()), DNG(Orig.DNG) {
     *this << Prepend;
     std::copy(Orig.Args.begin(), Orig.Args.end(), std::back_inserter(Args));
   }
@@ -651,8 +652,10 @@ public:
   DiagnosticInfoIROptimization(enum DiagnosticKind Kind,
                                enum DiagnosticSeverity Severity,
                                const char *PassName, const Function &Fn,
+                               Module *M,
                                const DiagnosticLocation &Loc, const Twine &Msg)
-      : DiagnosticInfoOptimizationBase(Kind, Severity, PassName, "", Fn, Loc) {
+      : DiagnosticInfoOptimizationBase(Kind, Severity, PassName, "", Fn, Loc),
+        DNG(DiagnosticNameGenerator::create(M)) {
     *this << Msg.str();
   }
 
@@ -662,11 +665,48 @@ public:
     return DI->getKind() >= DK_FirstRemark && DI->getKind() <= DK_LastRemark;
   }
 
+  /// Does not convert Value to string on construction like Argument,
+  /// instead defers that to the point of insertion, so that the DiagnosticNameGenerator
+  /// instance in the outer class can be used to construct a C syntax name
+  struct DiagnosticValue {
+    std::string Key;
+    const Value *Val;
+    // If set, the debug location corresponding to the value.
+    DiagnosticLocation Loc;
+
+    DiagnosticValue(StringRef Key, const Value *V);
+  };
+
+  using DiagnosticInfoOptimizationBase::insert;
+  void insert(DiagnosticValue DV);
+
 private:
   /// The IR value (currently basic block) that the optimization operates on.
   /// This is currently used to provide run-time hotness information with PGO.
   const Value *CodeRegion = nullptr;
+
+  DiagnosticNameGenerator DNG;
 };
+
+template <class RemarkT>
+RemarkT &
+operator<<(RemarkT &R,
+           typename std::enable_if<
+               std::is_base_of<DiagnosticInfoIROptimization, RemarkT>::value,
+               DiagnosticInfoIROptimization::DiagnosticValue>::type DV) {
+  R.insert(DV);
+  return R;
+}
+
+template <class RemarkT>
+RemarkT &
+operator<<(RemarkT &&R,
+           typename std::enable_if<
+               std::is_base_of<DiagnosticInfoIROptimization, RemarkT>::value,
+               DiagnosticInfoIROptimization::DiagnosticValue>::type DV) {
+  R.insert(DV);
+  return R;
+}
 
 /// Diagnostic information for applied optimization remarks.
 class OptimizationRemark : public DiagnosticInfoIROptimization {
@@ -678,17 +718,26 @@ public:
   /// region that the optimization operates on (currently only block is
   /// supported).
   OptimizationRemark(const char *PassName, StringRef RemarkName,
-                     const DiagnosticLocation &Loc, const Value *CodeRegion);
+                     const DiagnosticLocation &Loc, const Value *CodeRegion, Module *M = nullptr);
+
+  /// Non const code region allows construction of DiagnosticNameGenerator with Module,
+  /// for improved diagnostic names
+  OptimizationRemark(const char *PassName, StringRef RemarkName,
+                     const DiagnosticLocation &Loc, Value *CodeRegion);
 
   /// Same as above, but the debug location and code region are derived from \p
   /// Instr.
   OptimizationRemark(const char *PassName, StringRef RemarkName,
-                     const Instruction *Inst);
+                     const Instruction *Inst, Module *M = nullptr);
+  OptimizationRemark(const char *PassName, StringRef RemarkName,
+                     Instruction *Inst);
 
   /// Same as above, but the debug location and code region are derived from \p
   /// Func.
   OptimizationRemark(const char *PassName, StringRef RemarkName,
-                     const Function *Func);
+                     const Function *Func, Module *M = nullptr);
+  OptimizationRemark(const char *PassName, StringRef RemarkName,
+                     Function *Func);
 
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() == DK_OptimizationRemark;
@@ -707,10 +756,10 @@ private:
   /// will include the source code location. \p Msg is the message to show.
   /// Note that this class does not copy this message, so this reference
   /// must be valid for the whole life time of the diagnostic.
-  OptimizationRemark(const char *PassName, const Function &Fn,
+  OptimizationRemark(const char *PassName, Function &Fn,
                      const DiagnosticLocation &Loc, const Twine &Msg)
       : DiagnosticInfoIROptimization(DK_OptimizationRemark, DS_Remark, PassName,
-                                     Fn, Loc, Msg) {}
+                                     Fn, Fn.getParent(), Loc, Msg) {}
 };
 
 /// Diagnostic information for missed-optimization remarks.
@@ -723,13 +772,16 @@ public:
   /// CodeRegion is the region that the optimization operates on (currently only
   /// block is supported).
   OptimizationRemarkMissed(const char *PassName, StringRef RemarkName,
-                           const DiagnosticLocation &Loc,
-                           const Value *CodeRegion);
+                           const DiagnosticLocation &Loc, const Value *CodeRegion, Module *M = nullptr);
+  OptimizationRemarkMissed(const char *PassName, StringRef RemarkName,
+                           const DiagnosticLocation &Loc, Value *CodeRegion);
 
   /// Same as above but \p Inst is used to derive code region and debug
   /// location.
   OptimizationRemarkMissed(const char *PassName, StringRef RemarkName,
-                           const Instruction *Inst);
+                           const Instruction *Inst, Module *M = nullptr);
+  OptimizationRemarkMissed(const char *PassName, StringRef RemarkName,
+                           Instruction *Inst);
 
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() == DK_OptimizationRemarkMissed;
@@ -748,10 +800,10 @@ private:
   /// will include the source code location. \p Msg is the message to show.
   /// Note that this class does not copy this message, so this reference
   /// must be valid for the whole life time of the diagnostic.
-  OptimizationRemarkMissed(const char *PassName, const Function &Fn,
+  OptimizationRemarkMissed(const char *PassName, Function &Fn,
                            const DiagnosticLocation &Loc, const Twine &Msg)
       : DiagnosticInfoIROptimization(DK_OptimizationRemarkMissed, DS_Remark,
-                                     PassName, Fn, Loc, Msg) {}
+                                     PassName, Fn, Fn.getParent(), Loc, Msg) {}
 };
 
 /// Diagnostic information for optimization analysis remarks.
@@ -764,8 +816,10 @@ public:
   /// CodeRegion is the region that the optimization operates on (currently only
   /// block is supported).
   OptimizationRemarkAnalysis(const char *PassName, StringRef RemarkName,
-                             const DiagnosticLocation &Loc,
-                             const Value *CodeRegion);
+                             const DiagnosticLocation &Loc, const Value *CodeRegion,
+                             Module *M = nullptr);
+  OptimizationRemarkAnalysis(const char *PassName, StringRef RemarkName,
+                             const DiagnosticLocation &Loc, Value *CodeRegion);
 
   /// This is ctor variant allows a pass to build an optimization remark
   /// from an existing remark.
@@ -781,7 +835,9 @@ public:
   /// Same as above but \p Inst is used to derive code region and debug
   /// location.
   OptimizationRemarkAnalysis(const char *PassName, StringRef RemarkName,
-                             const Instruction *Inst);
+                             const Instruction *Inst, Module *M = nullptr);
+  OptimizationRemarkAnalysis(const char *PassName, StringRef RemarkName,
+                             Instruction *Inst);
 
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() == DK_OptimizationRemarkAnalysis;
@@ -796,14 +852,18 @@ public:
 
 protected:
   OptimizationRemarkAnalysis(enum DiagnosticKind Kind, const char *PassName,
-                             const Function &Fn, const DiagnosticLocation &Loc,
+                             Function &Fn, const DiagnosticLocation &Loc,
                              const Twine &Msg)
-      : DiagnosticInfoIROptimization(Kind, DS_Remark, PassName, Fn, Loc, Msg) {}
+    : DiagnosticInfoIROptimization(Kind, DS_Remark, PassName, Fn, Fn.getParent(), Loc, Msg) {}
 
   OptimizationRemarkAnalysis(enum DiagnosticKind Kind, const char *PassName,
                              StringRef RemarkName,
                              const DiagnosticLocation &Loc,
-                             const Value *CodeRegion);
+                             const Value *CodeRegion, Module *M);
+  OptimizationRemarkAnalysis(enum DiagnosticKind Kind, const char *PassName,
+                             StringRef RemarkName,
+                             const DiagnosticLocation &Loc,
+                             Value *CodeRegion);
 
 private:
   /// This is deprecated now and only used by the function API below.
@@ -815,10 +875,10 @@ private:
   /// include the source code location. \p Msg is the message to show. Note that
   /// this class does not copy this message, so this reference must be valid for
   /// the whole life time of the diagnostic.
-  OptimizationRemarkAnalysis(const char *PassName, const Function &Fn,
+  OptimizationRemarkAnalysis(const char *PassName, Function &Fn,
                              const DiagnosticLocation &Loc, const Twine &Msg)
       : DiagnosticInfoIROptimization(DK_OptimizationRemarkAnalysis, DS_Remark,
-                                     PassName, Fn, Loc, Msg) {}
+                                     PassName, Fn, Fn.getParent(), Loc, Msg) {}
 };
 
 /// Diagnostic information for optimization analysis remarks related to
@@ -836,7 +896,13 @@ public:
   OptimizationRemarkAnalysisFPCommute(const char *PassName,
                                       StringRef RemarkName,
                                       const DiagnosticLocation &Loc,
-                                      const Value *CodeRegion)
+                                      const Value *CodeRegion, Module *M = nullptr)
+      : OptimizationRemarkAnalysis(DK_OptimizationRemarkAnalysisFPCommute,
+                                   PassName, RemarkName, Loc, CodeRegion, M) {}
+  OptimizationRemarkAnalysisFPCommute(const char *PassName,
+                                      StringRef RemarkName,
+                                      const DiagnosticLocation &Loc,
+                                      Value *CodeRegion)
       : OptimizationRemarkAnalysis(DK_OptimizationRemarkAnalysisFPCommute,
                                    PassName, RemarkName, Loc, CodeRegion) {}
 
@@ -856,7 +922,7 @@ private:
   /// floating-point non-commutativity. Note that this class does not copy this
   /// message, so this reference must be valid for the whole life time of the
   /// diagnostic.
-  OptimizationRemarkAnalysisFPCommute(const char *PassName, const Function &Fn,
+  OptimizationRemarkAnalysisFPCommute(const char *PassName, Function &Fn,
                                       const DiagnosticLocation &Loc,
                                       const Twine &Msg)
       : OptimizationRemarkAnalysis(DK_OptimizationRemarkAnalysisFPCommute,
@@ -877,7 +943,12 @@ public:
   /// options that address pointer aliasing legality.
   OptimizationRemarkAnalysisAliasing(const char *PassName, StringRef RemarkName,
                                      const DiagnosticLocation &Loc,
-                                     const Value *CodeRegion)
+                                     const Value *CodeRegion, Module *M = nullptr)
+      : OptimizationRemarkAnalysis(DK_OptimizationRemarkAnalysisAliasing,
+                                   PassName, RemarkName, Loc, CodeRegion, M) {}
+  OptimizationRemarkAnalysisAliasing(const char *PassName, StringRef RemarkName,
+                                     const DiagnosticLocation &Loc,
+                                     Value *CodeRegion)
       : OptimizationRemarkAnalysis(DK_OptimizationRemarkAnalysisAliasing,
                                    PassName, RemarkName, Loc, CodeRegion) {}
 
@@ -897,7 +968,7 @@ private:
   /// pointer aliasing legality. Note that this class does not copy this
   /// message, so this reference must be valid for the whole life time of the
   /// diagnostic.
-  OptimizationRemarkAnalysisAliasing(const char *PassName, const Function &Fn,
+  OptimizationRemarkAnalysisAliasing(const char *PassName, Function &Fn,
                                      const DiagnosticLocation &Loc,
                                      const Twine &Msg)
       : OptimizationRemarkAnalysis(DK_OptimizationRemarkAnalysisAliasing,
@@ -953,11 +1024,14 @@ public:
   /// location. \p Msg is the message to show. Note that this class does not
   /// copy this message, so this reference must be valid for the whole life time
   /// of the diagnostic.
-  DiagnosticInfoOptimizationFailure(const Function &Fn,
-                                    const DiagnosticLocation &Loc,
+  DiagnosticInfoOptimizationFailure(const Function &Fn, const DiagnosticLocation &Loc,
+                                    const Twine &Msg, Module *M = nullptr)
+      : DiagnosticInfoIROptimization(DK_OptimizationFailure, DS_Warning,
+                                     nullptr, Fn, M, Loc, Msg) {}
+  DiagnosticInfoOptimizationFailure(Function &Fn, const DiagnosticLocation &Loc,
                                     const Twine &Msg)
       : DiagnosticInfoIROptimization(DK_OptimizationFailure, DS_Warning,
-                                     nullptr, Fn, Loc, Msg) {}
+                                     nullptr, Fn, Fn.getParent(), Loc, Msg) {}
 
   /// \p PassName is the name of the pass emitting this diagnostic.  \p
   /// RemarkName is a textual identifier for the remark (single-word,
@@ -966,7 +1040,10 @@ public:
   /// supported).
   DiagnosticInfoOptimizationFailure(const char *PassName, StringRef RemarkName,
                                     const DiagnosticLocation &Loc,
-                                    const Value *CodeRegion);
+                                    const Value *CodeRegion, Module *M = nullptr);
+  DiagnosticInfoOptimizationFailure(const char *PassName, StringRef RemarkName,
+                                    const DiagnosticLocation &Loc,
+                                    Value *CodeRegion);
 
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() == DK_OptimizationFailure;

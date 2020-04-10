@@ -8,6 +8,7 @@
 
 #include "llvm/Transforms/Utils/GlobalStatus.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/ilist_node.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constant.h"
@@ -79,6 +80,13 @@ static bool analyzeGlobalAux(const Value *V, GlobalStatus &GS,
         return true;
     } else if (const Instruction *I = dyn_cast<Instruction>(UR)) {
       if (!GS.HasMultipleAccessingFunctions) {
+        if (!I->getParent()) {
+          errs() << "I: " << *I << "\n";
+          errs() << "V: " << *V << "\n";
+          if (auto I2 = dyn_cast<Instruction>(V)) {
+            errs() << "V->parent: " << *I2->getParent() << "\n";
+          }
+        }
         const Function *F = I->getParent()->getParent();
         if (!GS.AccessingFunction)
           GS.AccessingFunction = F;

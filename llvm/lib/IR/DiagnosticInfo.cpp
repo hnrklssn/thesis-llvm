@@ -16,6 +16,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -171,55 +172,63 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key, const Value *V
   else if (auto *I = dyn_cast<Instruction>(V))
     Loc = I->getDebugLoc();
 
-  Val = getOriginalName(V);
-  return;
-
   // Only include names that correspond to user variables.  FIXME: We should use
   // debug info if available to get the name of the user variable.
-  if (isa<llvm::Argument>(V) || isa<GlobalValue>(V))
+  if (isa<llvm::Argument>(V) || isa<GlobalValue>(V)) {
     Val = GlobalValue::dropLLVMManglingEscape(V->getName());
-  else if (isa<Constant>(V)) {
+    Val = Val + " (1)";
+  } else if (isa<Constant>(V)) {
     raw_string_ostream OS(Val);
     V->printAsOperand(OS, /*PrintType=*/false);
+    Val = Val + " (2)";
   } else if (auto *I = dyn_cast<CallInst>(V)) {
-	  if(auto *F = I->getCalledFunction()) {
+    if (auto *F = I->getCalledFunction()) {
       LLVM_DEBUG(errs() << "\033[1;36m our function name: " << F->getName() << "\n\n");
 		  LLVM_DEBUG(errs() << "\033[0m\n");
 	    Val = F->getName();
+      Val = Val + " (3)";
 	  } else if(I->hasName()) {
       LLVM_DEBUG(errs() << "\033[1;35m our value name: " << I->getName() << "\n\n");
 		  LLVM_DEBUG(errs() << "\033[0m\n");
 	    Val = I->getName();
+      Val = Val + " (4)";
 	  } else {
-		Val = "value without name";
+		Val = "value without name (5)";
 	  }
-  } else if(auto *I = dyn_cast<Instruction>(V)) {
-	  if(I->hasMetadata()) {
-	    std::string debug_info;
-	    raw_string_ostream ss(debug_info);
-	    //ss << "'";
-	    SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
-	    I->getAllMetadata(MDs);
-	    for (auto &MD : MDs) {
-		    if (MDNode *N = MD.second) { // många MDTuple, vad innebär det?
-			    N->printAsOperand(ss, I->getModule());
-			    //ss << "\n";
-			    for (auto &OP : N->operands()) {
-				    ss << "debug info op ";
-				    OP->print(ss, I->getModule(), false);
-				    //ss << "\n";
-			    }
-		    }
-	    }
-	    //ss << "'";
-	    ss << " opcodename: " << I->getOpcodeName() << "  valuename: " << I->getName();
-	    Val = ss.str();
-	  } else {
-      		Val = I->getOpcodeName();
-	  }
+  } else if (auto *I = dyn_cast<Instruction>(V)) {
+    if (I->hasMetadata()) {
+      std::string debug_info;
+      raw_string_ostream ss(debug_info);
+      // ss << "'";
+      SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
+      I->getAllMetadata(MDs);
+      for (auto &MD : MDs) {
+        if (MDNode *N = MD.second) { // många MDTuple, vad innebär det?
+          N->printAsOperand(ss, I->getModule());
+          // ss << "\n";
+          for (auto &OP : N->operands()) {
+            ss << "debug info op ";
+            OP->print(ss, I->getModule(), false);
+            // ss << "\n";
+          }
+        }
+      }
+      // ss << "'";
+      ss << " opcodename: " << I->getOpcodeName()
+         << "  valuename: " << I->getName()
+         << " (6)";
+      Val = ss.str();
+    } else {
+      Val = I->getOpcodeName();
+      Val = Val + " (7)";
+    }
   } else {
-	 Val = V->getName();
+    Val = V->getName();
+    Val = Val + " (8)";
   }
+
+  //DiagnosticNameGenerator DNG = DiagnosticNameGenerator::create(V->getModule)
+  //Val = Val + " [" + DNG.getOriginalName(V) + "]";
   /*} else if (auto *I = dyn_cast<Instruction>(V)) {
     if (I->hasMetadata()) {
 	    SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
@@ -297,6 +306,15 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key, DebugLoc Loc)
     Val = "<UNKNOWN LOCATION>";
   }
 }
+DiagnosticInfoIROptimization::DiagnosticValue::DiagnosticValue(StringRef Key, const Value *V)
+  : Key(Key), Val(V) {
+  if (auto *F = dyn_cast<Function>(V)) {
+    if (DISubprogram *SP = F->getSubprogram())
+      Loc = SP;
+  }
+  else if (auto *I = dyn_cast<Instruction>(V))
+    Loc = I->getDebugLoc();
+}
 
 void DiagnosticInfoOptimizationBase::print(DiagnosticPrinter &DP) const {
   DP << getLocationStr() << ": " << getMsg();
@@ -307,16 +325,36 @@ void DiagnosticInfoOptimizationBase::print(DiagnosticPrinter &DP) const {
 OptimizationRemark::OptimizationRemark(const char *PassName,
                                        StringRef RemarkName,
                                        const DiagnosticLocation &Loc,
-                                       const Value *CodeRegion)
+                                       const Value *CodeRegion,
+                                       Module *M)
     : DiagnosticInfoIROptimization(
           DK_OptimizationRemark, DS_Remark, PassName, RemarkName,
-          *cast<BasicBlock>(CodeRegion)->getParent(), Loc, CodeRegion) {}
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          M, Loc,
+          CodeRegion) {}
 
 OptimizationRemark::OptimizationRemark(const char *PassName,
                                        StringRef RemarkName,
-                                       const Instruction *Inst)
+                                       const DiagnosticLocation &Loc,
+                                       Value *CodeRegion)
+    : DiagnosticInfoIROptimization(
+          DK_OptimizationRemark, DS_Remark, PassName, RemarkName,
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          cast<BasicBlock>(CodeRegion)->getParent()->getParent(), Loc, CodeRegion) {}
+
+OptimizationRemark::OptimizationRemark(const char *PassName,
+                                       StringRef RemarkName, const Instruction *Inst,
+                                       Module *M)
     : DiagnosticInfoIROptimization(DK_OptimizationRemark, DS_Remark, PassName,
                                    RemarkName, *Inst->getParent()->getParent(),
+                                   M,
+                                   Inst->getDebugLoc(), Inst->getParent()) {}
+
+OptimizationRemark::OptimizationRemark(const char *PassName,
+                                       StringRef RemarkName, Instruction *Inst)
+    : DiagnosticInfoIROptimization(DK_OptimizationRemark, DS_Remark, PassName,
+                                   RemarkName, *Inst->getParent()->getParent(),
+                                   Inst->getParent()->getParent()->getParent(),
                                    Inst->getDebugLoc(), Inst->getParent()) {}
 
 // Helper to allow for an assert before attempting to return an invalid
@@ -328,9 +366,9 @@ static const BasicBlock &getFirstFunctionBlock(const Function *Func) {
 
 OptimizationRemark::OptimizationRemark(const char *PassName,
                                        StringRef RemarkName,
-                                       const Function *Func)
+                                       Function *Func)
     : DiagnosticInfoIROptimization(DK_OptimizationRemark, DS_Remark, PassName,
-                                   RemarkName, *Func, Func->getSubprogram(),
+                                   RemarkName, *Func, Func->getParent(), Func->getSubprogram(),
                                    &getFirstFunctionBlock(Func)) {}
 
 bool OptimizationRemark::isEnabled() const {
@@ -341,18 +379,38 @@ bool OptimizationRemark::isEnabled() const {
 
 OptimizationRemarkMissed::OptimizationRemarkMissed(
     const char *PassName, StringRef RemarkName, const DiagnosticLocation &Loc,
-    const Value *CodeRegion)
+    const Value *CodeRegion, Module *M)
     : DiagnosticInfoIROptimization(
           DK_OptimizationRemarkMissed, DS_Remark, PassName, RemarkName,
-          *cast<BasicBlock>(CodeRegion)->getParent(), Loc, CodeRegion) {}
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          M, Loc,
+          CodeRegion) {}
+
+OptimizationRemarkMissed::OptimizationRemarkMissed(
+    const char *PassName, StringRef RemarkName, const DiagnosticLocation &Loc,
+    Value *CodeRegion)
+    : DiagnosticInfoIROptimization(
+          DK_OptimizationRemarkMissed, DS_Remark, PassName, RemarkName,
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          cast<BasicBlock>(CodeRegion)->getParent()->getParent(), Loc, CodeRegion) {}
 
 OptimizationRemarkMissed::OptimizationRemarkMissed(const char *PassName,
                                                    StringRef RemarkName,
-                                                   const Instruction *Inst)
+                                                   const Instruction *Inst,
+                                                   Module *M)
     : DiagnosticInfoIROptimization(DK_OptimizationRemarkMissed, DS_Remark,
                                    PassName, RemarkName,
                                    *Inst->getParent()->getParent(),
+                                   M,
                                    Inst->getDebugLoc(), Inst->getParent()) {}
+
+OptimizationRemarkMissed::OptimizationRemarkMissed(const char *PassName,
+                                                   StringRef RemarkName,
+                                                   Instruction *Inst)
+    : DiagnosticInfoIROptimization(
+          DK_OptimizationRemarkMissed, DS_Remark, PassName, RemarkName,
+          *Inst->getParent()->getParent(), Inst->getParent()->getParent()->getParent(),
+          Inst->getDebugLoc(), Inst->getParent()) {}
 
 bool OptimizationRemarkMissed::isEnabled() const {
   const Function &Fn = getFunction();
@@ -362,24 +420,54 @@ bool OptimizationRemarkMissed::isEnabled() const {
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(
     const char *PassName, StringRef RemarkName, const DiagnosticLocation &Loc,
-    const Value *CodeRegion)
+    const Value *CodeRegion, Module *M)
     : DiagnosticInfoIROptimization(
           DK_OptimizationRemarkAnalysis, DS_Remark, PassName, RemarkName,
-          *cast<BasicBlock>(CodeRegion)->getParent(), Loc, CodeRegion) {}
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          M, Loc,
+          CodeRegion) {}
+
+OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(
+    const char *PassName, StringRef RemarkName, const DiagnosticLocation &Loc,
+    Value *CodeRegion)
+    : DiagnosticInfoIROptimization(
+          DK_OptimizationRemarkAnalysis, DS_Remark, PassName, RemarkName,
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          cast<BasicBlock>(CodeRegion)->getParent()->getParent(), Loc, CodeRegion) {}
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(const char *PassName,
                                                        StringRef RemarkName,
-                                                       const Instruction *Inst)
+                                                       const Instruction *Inst,
+                                                       Module *M)
     : DiagnosticInfoIROptimization(DK_OptimizationRemarkAnalysis, DS_Remark,
                                    PassName, RemarkName,
                                    *Inst->getParent()->getParent(),
+                                   M,
                                    Inst->getDebugLoc(), Inst->getParent()) {}
+
+OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(const char *PassName,
+                                                       StringRef RemarkName,
+                                                       Instruction *Inst)
+    : DiagnosticInfoIROptimization(
+          DK_OptimizationRemarkAnalysis, DS_Remark, PassName, RemarkName,
+          *Inst->getParent()->getParent(), Inst->getParent()->getParent()->getParent(),
+          Inst->getDebugLoc(), Inst->getParent()) {}
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(
     enum DiagnosticKind Kind, const char *PassName, StringRef RemarkName,
-    const DiagnosticLocation &Loc, const Value *CodeRegion)
+    const DiagnosticLocation &Loc, const Value *CodeRegion, Module *M)
+    : DiagnosticInfoIROptimization(
+          Kind, DS_Remark, PassName, RemarkName,
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          M, Loc,
+          CodeRegion) {}
+
+OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(
+    enum DiagnosticKind Kind, const char *PassName, StringRef RemarkName,
+    const DiagnosticLocation &Loc, Value *CodeRegion)
     : DiagnosticInfoIROptimization(Kind, DS_Remark, PassName, RemarkName,
                                    *cast<BasicBlock>(CodeRegion)->getParent(),
+                                   cast<BasicBlock>(CodeRegion)->getParent()->getParent(),
                                    Loc, CodeRegion) {}
 
 bool OptimizationRemarkAnalysis::isEnabled() const {
@@ -395,10 +483,20 @@ void DiagnosticInfoMIRParser::print(DiagnosticPrinter &DP) const {
 
 DiagnosticInfoOptimizationFailure::DiagnosticInfoOptimizationFailure(
     const char *PassName, StringRef RemarkName, const DiagnosticLocation &Loc,
-    const Value *CodeRegion)
+    const Value *CodeRegion, Module *M)
     : DiagnosticInfoIROptimization(
           DK_OptimizationFailure, DS_Warning, PassName, RemarkName,
-          *cast<BasicBlock>(CodeRegion)->getParent(), Loc, CodeRegion) {}
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          M, Loc,
+          CodeRegion) {}
+
+DiagnosticInfoOptimizationFailure::DiagnosticInfoOptimizationFailure(
+    const char *PassName, StringRef RemarkName, const DiagnosticLocation &Loc,
+    Value *CodeRegion)
+    : DiagnosticInfoIROptimization(
+          DK_OptimizationFailure, DS_Warning, PassName, RemarkName,
+          *cast<BasicBlock>(CodeRegion)->getParent(),
+          cast<BasicBlock>(CodeRegion)->getParent()->getParent(), Loc, CodeRegion) {}
 
 bool DiagnosticInfoOptimizationFailure::isEnabled() const {
   // Only print warnings.
@@ -433,6 +531,13 @@ void DiagnosticInfoOptimizationBase::insert(setIsVerbose V) {
 
 void DiagnosticInfoOptimizationBase::insert(setExtraArgs EA) {
   FirstExtraArgIndex = Args.size();
+}
+
+void DiagnosticInfoIROptimization::insert(DiagnosticValue DV) {
+  auto Name = DNG.getOriginalName(DV.Val);
+  Argument A = Argument(DV.Key, Name);
+  A.Loc = DV.Loc;
+  insert(A);
 }
 
 std::string DiagnosticInfoOptimizationBase::getMsg() const {

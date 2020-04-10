@@ -1100,6 +1100,7 @@ public:
 
   uint8_t getCC() const { return CC; }
 
+  /// First element is the return type, the rest are parameter types.
   DITypeRefArray getTypeArray() const {
     return cast_or_null<MDTuple>(getRawTypeArray());
   }

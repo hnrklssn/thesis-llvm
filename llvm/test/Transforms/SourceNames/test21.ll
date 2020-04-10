@@ -1,4 +1,4 @@
-; RUN: opt -load LLVMDiagnosticNameTest%shlibext -diagnostic-names -S < %s 2>&1 >&2 | FileCheck %s
+; RUN: opt -load LLVMDiagnosticNameTest%shlibext -diagnostic-names -S < %s 2>&1 >/dev/null | FileCheck %s
 
 ; CHECK:  %arrayidx = getelementptr inbounds i32, i32* %arr, i64 %idxprom, !dbg !26 --> arr[my_global_int]
 ; CHECK:  %arrayidx2 = getelementptr inbounds i32, i32* %arr, i64 %indvars.iv, !dbg !32 --> arr[i]
