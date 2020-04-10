@@ -119,12 +119,12 @@ static void findAllDITypeUses(const DIType *T, SmallVectorImpl<DIType *> &Users,
   DLOG("looking for uses of " << *T);
   DIF.processModule(M);
   for (auto User : DIF.types()) {
-    DLOG("USER: " << *User);
+    //DLOG("USER: " << *User);
     if (auto Comp = dyn_cast<DICompositeType>(User)) {
       for (auto Elem : Comp->getElements()) {
         if (!Elem)
           continue;
-        DLOG("ELEM: " << *Elem);
+        //DLOG("ELEM: " << *Elem);
         if (Elem == T) {
           DLOG("found use!");
           Users.push_back(cast<DIType>(User));
@@ -133,9 +133,9 @@ static void findAllDITypeUses(const DIType *T, SmallVectorImpl<DIType *> &Users,
       }
     } else if (auto Derived = dyn_cast<DIDerivedType>(User)) {
       if (Derived->getBaseType()) {
-        DLOG("BASE: " << *Derived->getBaseType());
+        //DLOG("BASE: " << *Derived->getBaseType());
       } else {
-        DLOG("BASE: nullptr");
+        //DLOG("BASE: nullptr");
       }
       if (Derived->getBaseType() == T) {
         DLOG("found use!");
@@ -270,6 +270,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
             DLOG("dbg field ty: " << *DIFieldTy);
             DLOG("dbg ty: " << *DITy);
             DLOG("value ty: " << *Ty);
+            break;
           }
         }
       } else if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
@@ -455,10 +456,15 @@ std::pair<TypeCompareResult, uint32_t> DiagnosticNameGenerator::isPointerChainTo
     DLOG("ty: " << *Ty);
     DLOG("dity: " << *DITy);
     TypeCompareResult res = NoMatch;
+    SmallSet<DIType*, 8> Visited;
     while (res = compareValueTypeAndDebugType(Ty, DITy), DITy && !res) {
       LLVM_DEBUG(errs() << __FUNCTION__ << "\n");
-      DLOG("res: " << res);
+      if (Visited.count(DITy)) {
+        DLOG("looped back around to " << *DITy);
+        return std::make_pair(NoMatch, nullptr);
+      }
       if (res) {
+        DLOG("res: " << res);
         llvm_unreachable("res invalid");
       }
       if (auto PointerTy = dyn_cast<PointerType>(Ty)) {
@@ -476,6 +482,7 @@ std::pair<TypeCompareResult, uint32_t> DiagnosticNameGenerator::isPointerChainTo
           }
         }
       }
+      Visited.insert(DITy);
       if (auto Comp = dyn_cast<DICompositeType>(DITy)) {
         //LLVM_DEBUG(errs() << "composite type: " << *Comp << "\n");
         DITy = cast<DIType>(Comp->getElements()[0]);
@@ -1355,8 +1362,8 @@ namespace llvm {
       }
       // We want to find a DIType that contains (potentially transitively) the DIType of OP,
       // and also matches the value type of BC
-      SmallVector<DIType*, 4> Users;
-      SmallPtrSet<DIType*, 8> PrevUsers;
+      SmallVector<DIType*, 8> Users;
+      SmallPtrSet<DIType *, 32> VisitedUsers;
       DIType *T = *FinalType;
       if (auto Derived = dyn_cast<DIDerivedType>(T)) T = Derived->getBaseType();
       findAllDITypeUses(T, Users, *M);
@@ -1365,9 +1372,11 @@ namespace llvm {
       *FinalType = nullptr;
       while (!Users.empty()) {
         DLOG("iterating users...");
+        SmallVector<DIType *, 8> PrevUsers;
         for (auto User : Users) {
           DLOG("User type: " << *User);
-          if (PrevUsers.count(User)) continue;
+          if (VisitedUsers.count(User))
+            continue;
           if (auto res = calibrateDebugType(BC->getType(), User); res.first) {
             *FinalType = res.second;
             DLOG("found matching type! ");
@@ -1375,10 +1384,11 @@ namespace llvm {
             if (res.first == Match) return name;
             // if matching includes incomplete types, keep looking for exact match
           }
+          VisitedUsers.insert(User);
+          PrevUsers.push_back(User);
         }
         DLOG("round finished");
-        SmallVector<DIType *, 4> PrevUsers;
-        PrevUsers.swap(Users);
+        Users.clear();
         for (auto User : PrevUsers) { // types of BC and OP can differ several nesting levels
           findAllDITypeUses(User, Users, *M);
         }
