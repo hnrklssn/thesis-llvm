@@ -15,15 +15,78 @@
 #ifndef LLVM_IR_DIAGNOSTICNAME_H
 #define LLVM_IR_DIAGNOSTICNAME_H
 
+#include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/Module.h"
 #include <string>
 
 namespace llvm {
 
+enum TypeCompareResult { NoMatch = 0, IncompleteTypeMatch, Match };
+class DiagnosticNameGenerator {
+public:
   /// Reconstruct the original name of a value from debug symbols.
   /// Output string is in C syntax no matter the source language.
   /// Will fail if input is not compiled with debug symbols (-g with Clang).
-  std::string getOriginalName(const Value* V);
+  std::string getOriginalName(const Value *V);
+  DiagnosticNameGenerator(Module *M, DIBuilder *B);
+  static DiagnosticNameGenerator create(Module *M);
 
-}
+private:
+  Module *M;
+  DIBuilder *Builder;
+  DIDerivedType *createPointerType(DIType *BaseTy);
+  TypeCompareResult compareValueTypeAndDebugType(const Type *Ty, const DIType *DITy);
+  std::string getFragmentTypeName(DIType *T, int64_t Offset,
+                                  DIType **FinalType,
+                                  std::string Sep = ".");
+  std::string getFragmentTypeName(DIType *T, const int64_t *Offsets_begin,
+                                  const int64_t *Offsets_end,
+                                  DIType **FinalType,
+                                  std::string Sep = ".");
+  std::pair<TypeCompareResult, uint32_t>
+  isPointerChainToType(const PointerType *Ty, DIType *DITy);
+  std::pair<TypeCompareResult, DIType*> calibrateDebugType(const Type *Ty, DIType *DITy);
+  std::string getNameFromDbgVariableIntrinsic(const DbgVariableIntrinsic *VI,
+                                              DIType **const FinalType);
+  DbgVariableIntrinsic *getSingleDbgUser(const Value *V);
+  std::string
+  getOriginalRelativePointerName(const Value *V, StringRef ArrayIdx,
+                                 SmallVectorImpl<int64_t> &StructIndices,
+                                 DIType **FinalType);
+  std::string getFragmentNameNoDbg(const Value *V, const Use *idx_begin,
+                                   const Use *idx_end);
+  std::string getOriginalPointerName(const GetElementPtrInst *const GEP,
+                                     DIType **const FinalType);
+  std::pair<std::string, int32_t>
+  getOriginalInductionVariableName(const User *V, DIType **FinalType);
+  std::string getOriginalStoreName(const StoreInst *ST,
+                                   DIType **FinalType);
+  std::string getOriginalCallName(const CallBase *Call,
+                                  DIType **FinalType);
+  std::string getOriginalSwitchName(const SwitchInst *Switch,
+                                    DIType **FinalType);
+  std::string getOriginalCmpName(const CmpInst *Cmp, DIType **FinalType);
+  std::string getOriginalSelectName(const SelectInst *Select,
+                                    DIType **FinalType);
+  std::string getOriginalPhiName(const PHINode *PHI, DIType **FinalType);
+  std::string getOriginalAsmName(const InlineAsm *Asm,
+                                 DIType **FinalType);
+  std::string getOriginalReturnName(const ReturnInst *Return,
+                                    DIType **FinalType);
+  std::string getOriginalBranchName(const BranchInst *Br,
+                                    DIType **FinalType);
+  std::string getOriginalBinOpName(const BinaryOperator *BO,
+                                   DIType **FinalType);
+  std::string getOriginalInstructionName(const Instruction *const I,
+                                         DIType **const FinalType);
+  std::string getOriginalConstantName(const Constant *C,
+                                      DIType **const FinalType);
+  std::string getOriginalNameImpl(const Value *V,
+                                  DIType **const FinalType);
+  std::string getOriginalBitCastName(const BitCastInst *BC, DIType **const FinalType);
+};
+} // namespace llvm
 #endif // LLVM_IR_DIAGNOSTICNAME_H

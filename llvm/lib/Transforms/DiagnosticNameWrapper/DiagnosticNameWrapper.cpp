@@ -30,8 +30,8 @@ using namespace llvm;
 #define DEBUG_TYPE "diagnostic-name"
 
 namespace {
-  void printVariable(Value *I) {
-    errs() << "print variable " << getOriginalName(I) << "\n";
+  void printVariable(Value *I, DiagnosticNameGenerator &DNG) {
+    errs() << "print variable " << DNG.getOriginalName(I) << "\n";
   }
 
 struct DiagnosticNameWrapper : public FunctionPass {
@@ -39,19 +39,20 @@ struct DiagnosticNameWrapper : public FunctionPass {
   DiagnosticNameWrapper() : FunctionPass(ID) {}
 
   bool runOnFunction(Function &F) override {
+    DiagnosticNameGenerator DNG = DiagnosticNameGenerator::create(F.getParent());
     LLVM_DEBUG(errs() << "Source Names: ");
     LLVM_DEBUG(errs().write_escaped(F.getName()) << '\n');
     for(auto &BB : F.getBasicBlockList()) {
       for(auto &I : BB.getInstList()) {
         LLVM_DEBUG(errs() << I << "\n");
         if (auto GEP = dyn_cast<GetElementPtrInst>(&I)) {
-          errs() << I << " --> " << getOriginalName(GEP) << "\n";
+          errs() << I << " --> " << DNG.getOriginalName(GEP) << "\n";
         }
       }
     }
     errs() << "---args section--\n";
     for (auto& A : F.args()) {
-      printVariable(&A);
+      printVariable(&A, DNG);
     }
     return false;
   }

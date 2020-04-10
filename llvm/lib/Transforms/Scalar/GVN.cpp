@@ -855,7 +855,7 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
   User *OtherAccess = nullptr;
 
   OptimizationRemarkMissed R(DEBUG_TYPE, "LoadClobbered", LI);
-  R << "load " << NV("loadinst", LI) << " of pointer " << NV("pointer", LI->getPointerOperand()) << " of type " << NV("Type", LI->getType()) << " not eliminated";
+  R << "load " << DV("loadinst", LI) << " of pointer " << DV("pointer", LI->getPointerOperand()) << " of type " << NV("Type", LI->getType()) << " not eliminated";
   int i = 0;
   for (auto *U2 : LI->users()) {
 	  //errs() << "use " << i << "\n"; TODO: fix @henrik
@@ -876,9 +876,9 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
     }
 
   if (OtherAccess)
-    R << " in favor of " << NV("OtherAccess", OtherAccess);
+    R << " in favor of " << DV("OtherAccess", OtherAccess);
 
-  R << " because it is clobbered by " << NV("ClobberedBy", DepInfo.getInst());
+  R << " because it is clobbered by " << DV("ClobberedBy", DepInfo.getInst());
 
   ORE->emit(R);
 }
@@ -1328,7 +1328,7 @@ static void reportLoadElim(LoadInst *LI, Value *AvailableValue,
     return OptimizationRemark(DEBUG_TYPE, "LoadElim", LI)
            << "load of type " << NV("Type", LI->getType()) << " eliminated"
            << setExtraArgs() << " in favor of "
-           << NV("InfavorOfValue", AvailableValue);
+           << DV("InfavorOfValue", AvailableValue);
   });
 }
 

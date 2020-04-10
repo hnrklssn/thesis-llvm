@@ -120,6 +120,7 @@ private:
 /// write/readability.
 namespace ore {
 using NV = DiagnosticInfoOptimizationBase::Argument;
+using DV = DiagnosticInfoIROptimization::DiagnosticValue;
 using setIsVerbose = DiagnosticInfoOptimizationBase::setIsVerbose;
 using setExtraArgs = DiagnosticInfoOptimizationBase::setExtraArgs;
 }
