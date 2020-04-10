@@ -69,6 +69,25 @@ int main(int argc, const char **argv) {
   ClangTool Tool(OptionsParser.getCompilations(),
                  OptionsParser.getSourcePathList());
 
+  std::string command;
+  auto compilationDB =
+      OptionsParser.getCompilations()
+          .getCompileCommands(OptionsParser.getSourcePathList().front())
+          .front();
+  auto commandList = compilationDB.CommandLine;
+  for (auto &part : commandList)
+    command += " " + part;
+
+  // todo use diff seperator?
+
+  // allow moving the binary and still finding clang builtin headers.
+  ArgumentsAdjuster ardj1 =
+      getInsertArgumentAdjuster("-I/usr/local/bin/../lib/clang/10.0.0/include");
+  Tool.appendArgumentsAdjuster(ardj1);
+  // you can bundle the headers needed instead of looking for them
+
+  llvm::outs() << "cd " << compilationDB.Directory << " && " << command << "\n";
+
   Printer Printer;
   MatchFinder Finder;
   Finder.addMatcher(FunctionMatcher, &Printer);
