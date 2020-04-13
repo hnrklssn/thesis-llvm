@@ -58,10 +58,13 @@
 namespace llvm {
 
 static DIType *trimNonPointerDerivedTypes(DIType *DITy) {
+  DLOG("DITy: " << DITy);
   while (isa_and_nonnull<DIDerivedType>(DITy) &&
          DITy->getTag() != dwarf::DW_TAG_pointer_type) {
+    DLOG("DITy: " << *DITy);
     DITy = cast<DIDerivedType>(DITy)->getBaseType();
   }
+  DLOG("returning: " << DITy);
   return DITy;
 }
 
@@ -679,7 +682,10 @@ namespace llvm {
   /// Get rest of name based on the type of the base value, and the offset.
   std::string DiagnosticNameGenerator::getFragmentTypeName(DIType *T, const int64_t *Offsets_begin, const int64_t *Offsets_end, DIType **FinalType, std::string Sep/* = "."*/) {
     int64_t Offset = -1;
-    if (!T) return "fragment-type-null";
+    if (!T) {
+      DLOG("fragment type null");
+      return "fragment-type-null";
+    }
     DLOG("getFragmentTypeName: " << *T);
     if (auto Derived = dyn_cast<DIDerivedType>(T)) {
       if(Derived->getBaseType()) {
@@ -898,9 +904,14 @@ namespace llvm {
     auto PT1 = cast<DIDerivedType>(T);
     DLOG("GEP: " << *V);
     DLOG("PT1: " << *PT1);
-    DLOG("basetype: " << *PT1->getBaseType());
     T = PT1->getBaseType();
     T = trimNonPointerDerivedTypes(T);
+    if (!T) {
+      DLOG("basetype null for " << *V);
+      return ptrName + ArrayIdx.str() + getFragmentNameNoDbg(V, StructIndices.begin(), StructIndices.end());
+    } else {
+      DLOG("basetype: " << *T);
+    }
     if (auto PT = dyn_cast<DIDerivedType>(T); PT && PT->getBaseType()) {
       DLOG("GEP: " << *V);
       DLOG("PT: " << *PT);
@@ -912,46 +923,62 @@ namespace llvm {
     return ptrName + ArrayIdx.str() + getFragmentTypeName(T, StructIndices.begin(), StructIndices.end(), FinalType);
   }
 
-  std::string DiagnosticNameGenerator::getFragmentNameNoDbg(const Value *V, const Use *idx_begin, const Use *idx_end) {
+  template <typename IdxType>
+  std::string getFragmentNameNoDbgImpl(const Type *Ty, IdxType Idx, std::string IdxName) {
+    std::string name = "";
+    if (auto StructTy = dyn_cast<StructType>(Ty)) {
+      Ty = StructTy->getTypeAtIndex(Idx);
+      // This is not valid C/C++ syntax, but indexing structs by field index
+      // is not valid C/C++. The field access is the normal kind in the source
+      // code, but we don't have access to the field names here since we lack
+      // debug info.
+      name += ".getElem<";
+      raw_string_ostream SSO(name);
+      Ty->print(SSO);
+      SSO.flush();
+      name += ">(";
+      name += IdxName;
+      name += ")";
+    } else if (auto SeqTy = dyn_cast<SequentialType>(Ty)) {
+      name += "[";
+      name += IdxName;
+      name += "]";
+      Ty = SeqTy->getElementType();
+    } else if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
+      name += "[";
+      name += IdxName;
+      name += "]";
+      Ty = PtrTy->getElementType();
+    } else {
+      DLOG("Ty: " << *Ty);
+      DLOG("Idx: " << Idx);
+      DLOG("name: " << name);
+      llvm_unreachable("unexpected type");
+    }
+    return name;
+  }
+
+  std::string DiagnosticNameGenerator::getFragmentNameNoDbg(
+      const Value *V, const int64_t *idx_begin, const int64_t *idx_end) {
+    std::string name = "";
+    Type *Ty = V->getType();
+    for (auto itr = idx_begin; itr < idx_end; itr++) {
+      auto Idx = *itr;
+      auto IdxName = std::to_string(Idx);
+      name += getFragmentNameNoDbgImpl<int64_t>(Ty, Idx, IdxName);
+    }
+    return name;
+  }
+
+  std::string DiagnosticNameGenerator::getFragmentNameNoDbg(
+      const Value *V, const Use *idx_begin, const Use *idx_end) {
     std::string name = "";
     Type *Ty = V->getType();
     for (auto itr = idx_begin; itr < idx_end; itr++) {
       auto Idx = itr->get();
       auto IdxName = getOriginalNameImpl(Idx, nullptr);
-      //DLOG("Ty: " << *Ty);
-
-      if (auto StructTy = dyn_cast<StructType>(Ty)) {
-        Ty = StructTy->getTypeAtIndex(Idx);
-        // This is not valid C/C++ syntax, but indexing structs by field index
-        // is not valid C/C++. The field access is the normal kind in the source
-        // code, but we don't have access to the field names here since we lack
-        // debug info.
-        name += ".getElem<";
-        raw_string_ostream SSO(name);
-        Ty->print(SSO);
-        SSO.flush();
-        name += ">(";
-        name += IdxName;
-        name += ")";
-      } else if (auto SeqTy = dyn_cast<SequentialType>(Ty)) {
-        name += "[";
-        name += IdxName;
-        name += "]";
-        Ty = SeqTy->getElementType();
-      } else if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
-        name += "[";
-        name += IdxName;
-        name += "]";
-        Ty = PtrTy->getElementType();
-      } else {
-        DLOG("Ty: " << *Ty);
-        DLOG("Idx: " << *Idx);
-        DLOG("OPtype: " << *V->getType());
-        DLOG("name: " << name);
-        llvm_unreachable("unexpected type");
-      }
+      name += getFragmentNameNoDbgImpl<Value *>(Ty, Idx, IdxName);
     }
-    //DLOG("name: " << name);
     return name;
   }
 

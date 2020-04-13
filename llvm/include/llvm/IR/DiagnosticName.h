@@ -20,11 +20,13 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Module.h"
+#include <bits/stdint-intn.h>
 #include <string>
 
 namespace llvm {
 
-enum TypeCompareResult { NoMatch = 0, IncompleteTypeMatch, Match };
+enum TypeCompareResult {
+ NoMatch = 0, IncompleteTypeMatch, Match };
 class DiagnosticNameGenerator {
 public:
   /// Reconstruct the original name of a value from debug symbols.
@@ -56,6 +58,8 @@ private:
   getOriginalRelativePointerName(const Value *V, StringRef ArrayIdx,
                                  SmallVectorImpl<int64_t> &StructIndices,
                                  DIType **FinalType);
+  std::string getFragmentNameNoDbg(const Value *V, const int64_t *idx_begin,
+                                   const int64_t *idx_end);
   std::string getFragmentNameNoDbg(const Value *V, const Use *idx_begin,
                                    const Use *idx_end);
   std::string getOriginalPointerName(const GetElementPtrInst *const GEP,
