@@ -44,6 +44,8 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <bits/stdint-intn.h>
 #include <bits/stdint-uintn.h>
 #include <deque>
 #include <sstream>
@@ -54,6 +56,15 @@
 #define DLOG(args) LLVM_DEBUG(errs() << "[" /*<< __FILE__ << ":"*/ << __LINE__ << "] "<< args << "\n")
 
 namespace llvm {
+
+static DIType *trimNonPointerDerivedTypes(DIType *DITy) {
+  while (isa_and_nonnull<DIDerivedType>(DITy) &&
+         DITy->getTag() != dwarf::DW_TAG_pointer_type) {
+    DITy = cast<DIDerivedType>(DITy)->getBaseType();
+  }
+  return DITy;
+}
+
   static void printIndent(unsigned int indent) {
     for (unsigned int i = 0; i < indent; i++)
       errs() << "  ";
@@ -89,7 +100,7 @@ static void printValueType(const Type *T, unsigned int indent = 0) {
 
 static void printDbgType(const DIType *T, unsigned int indent = 0) {
   printIndent(indent);
-  if (indent > 7) {
+  if (indent > 8) {
     errs() << "[omitted]\n";
     return;
   }
@@ -103,12 +114,18 @@ static void printDbgType(const DIType *T, unsigned int indent = 0) {
   }
   if (auto Comp = dyn_cast<DICompositeType>(T)) {
     for (unsigned i = 0; i < Comp->getElements().size(); i++) {
-      if (i > 3) {
+      if (i > 5) {
         printIndent(indent+1);
         errs() << "[rest of fields omitted]\n";
         break;
       }
-      printDbgType(cast<DIType>(Comp->getElements()[i]), indent + 1);
+      auto Elem = Comp->getElements()[i];
+      if (!isa<DIType>(Elem)) { // e.g. DISubrange, DIEnumerator
+        printIndent(indent + 1);
+        errs() << *Elem << "\n";
+      } else {
+        printDbgType(cast<DIType>(Elem), indent + 1);
+      }
     }
   }
 }
@@ -197,18 +214,20 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
         DLOG("dity null, Ty: " << *Ty);
         llvm_unreachable("DITy null");
       }
-      /*DLOG(__FUNCTION__ << "\n"
+      DLOG(__FUNCTION__ << "\n"
                         << "Ty: " << *Ty << "\n"
-                        << "DITy: " << *DITy);*/
+                        << "DITy: " << *DITy);
 
       // These types are abstractions that don't exist in IR types
-      if (DITy->getTag() == dwarf::DW_TAG_typedef ||
-          DITy->getTag() == dwarf::DW_TAG_member ||
-          DITy->getTag() == dwarf::DW_TAG_const_type)
+      switch (DITy->getTag()) {
+      case dwarf::DW_TAG_typedef:
+      case dwarf::DW_TAG_member:
+      case dwarf::DW_TAG_const_type:
+      case dwarf::DW_TAG_atomic_type:
         return compareValueTypeAndDebugTypeInternal(
             Ty, cast<DIDerivedType>(DITy)->getBaseType(),
             EquivalentStructTypes);
-
+      }
       TypeCompareResult res = Match;
       if (DITy->getTag() == dwarf::DW_TAG_union_type) {
         auto DIUnionTy = cast<DICompositeType>(DITy);
@@ -219,9 +238,9 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
           for (auto DIUnionElem : DIUnionTy->getElements()) {
             if (compareValueTypeAndDebugTypeInternal(Elem, cast<DIType>(DIUnionElem), EquivalentStructTypes) == Match)
               return Match;
-          }
+           }
           return IncompleteTypeMatch;
-          // Unions aren't very typesafe, just hope that this is struct field that's not needed right now
+          // Unions aren't very typesafe, just hope that this is a struct field that's not needed right now
           // TODO: look into supporting union bitcast pattern
         }
         DLOG("union type: " << *DIUnionTy);
@@ -241,9 +260,13 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
         const auto PrevResult = EquivalentStructTypes.find(DIStructTy);
         if (PrevResult != EquivalentStructTypes.end()) {
           if (PrevResult->second == StructTy) {
+            DLOG("looped around for " << *DITy);
             return Match; // We have looped back around and not found
                           // any contradictions
           }
+          DLOG("looped around for " << *DITy << ", but types not matching");
+          DLOG("prev: " << *PrevResult->second);
+          DLOG("curr: " << *StructTy);
           return NoMatch;
         }
         EquivalentStructTypes.insert(std::make_pair(DIStructTy, StructTy));
@@ -255,6 +278,9 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
                             << DIStructTy->getElements()->getNumOperands()
                             << " elements\n");
           return NoMatch;
+        }
+        if (!res) {
+          llvm_unreachable("res false before checking fields");
         }
         for (unsigned i = 0; i < StructTy->getNumElements(); i++) {
           auto FieldTy = StructTy->getElementType(i);
@@ -277,7 +303,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
         switch (DITy->getTag()) {
         case dwarf::DW_TAG_pointer_type: {
           auto DIPtrTy = cast<DIDerivedType>(DITy);
-          if (!DIPtrTy->getBaseType())
+          if (!trimNonPointerDerivedTypes(DIPtrTy->getBaseType()))
             return IncompleteTypeMatch; // void pointer afaict
           res =
               std::min(res, compareValueTypeAndDebugTypeInternal(
@@ -296,17 +322,24 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
         case dwarf::DW_TAG_array_type: {
           /* Pointer to sequential is normal array type variable.
              Sequential is the array of elements in memory, which includes
-             array fields in structs. So DW_TAG_array_type matches
-             both pointer types and sequential types.
+             array fields in structs. Pointer to element type can be e.g. function argument.
+             So DW_TAG_array_type matches sequential types,
+             pointers to sequentials, and normal pointers.
           */
           if (!isa<SequentialType>(PtrTy->getElementType())) {
             DLOG("dity is array, but ty does not point to seq");
-            return NoMatch;
+            // Value type is just pointer, so just compare base types
+            res = compareValueTypeAndDebugTypeInternal(
+                PtrTy->getElementType(),
+                cast<DICompositeType>(DITy)->getBaseType(),
+                EquivalentStructTypes);
+          } else {
+            // Pointer to sequential type, so we can compare array sizes.
+            // If sizes mismatch we still get incomplete type match since
+            // the smaller array is a subtype of the larger (provided base types match).
+            res = compareValueTypeAndDebugTypeInternal(
+                PtrTy->getElementType(), DITy, EquivalentStructTypes);
           }
-          auto SeqTy = cast<SequentialType>(PtrTy->getElementType());
-          res = compareValueTypeAndDebugTypeInternal(
-                             SeqTy, DITy,
-                             EquivalentStructTypes);
         }; break;
         default:
           LLVM_DEBUG(errs() << "value type is pointer, but debug type is "
@@ -315,13 +348,23 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
         }
       } else if (auto IntTy = dyn_cast<IntegerType>(Ty)) {
         DLOG("IntTy");
-        if (!isa<DIBasicType>(DITy)) {
+        unsigned IntSize = IntTy->getIntegerBitWidth();
+        if (auto Basic = dyn_cast<DIBasicType>(DITy)) {
+          DLOG("dbg size in bits: " << Basic->getSizeInBits());
+          DLOG("value size in bits: " << IntSize);
+          DLOG("int tag: " << Basic->getTag());
+          res = Basic->getSizeInBits() == IntSize ? Match : NoMatch;
+        } else if (DITy->getTag() == dwarf::DW_TAG_enumeration_type) {
+          int64_t MaxEnum = 0;
+          for (auto Elem : cast<DICompositeType>(DITy)->getElements()) {
+            auto EnumValue = cast<DIEnumerator>(Elem)->getValue();
+            MaxEnum = std::max(MaxEnum, EnumValue);
+          }
+          res = IntSize > std::floor(std::log2(MaxEnum)) ? Match : NoMatch;
+        } else {
           DLOG("DITy not matching integer: " << *DITy);
           return NoMatch;
         }
-        unsigned IntSize = IntTy->getIntegerBitWidth();
-        auto Basic = cast<DIBasicType>(DITy);
-        res = Basic->getSizeInBits() == IntSize ? Match : NoMatch;
       } else if (Ty->isFloatingPointTy()) {
         if (!isa<DIBasicType>(DITy)) {
           return NoMatch;
@@ -374,7 +417,9 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
         DLOG("dity: " << *DITy);
         switch(DITy->getTag()) {
         default:
-          llvm_unreachable("unexpected dity tag for seq");
+          DLOG("unexpected dity tag for seq");
+          LLVM_DEBUG(printDbgType(DITy));
+          return NoMatch;
         // check element type match
         case dwarf::DW_TAG_array_type: {
           auto DIArrayTy = cast<DICompositeType>(DITy);
@@ -635,7 +680,7 @@ namespace llvm {
   std::string DiagnosticNameGenerator::getFragmentTypeName(DIType *T, const int64_t *Offsets_begin, const int64_t *Offsets_end, DIType **FinalType, std::string Sep/* = "."*/) {
     int64_t Offset = -1;
     if (!T) return "fragment-type-null";
-    LLVM_DEBUG(errs() << "getFragmentTypeName: " << *T << "\n");
+    DLOG("getFragmentTypeName: " << *T);
     if (auto Derived = dyn_cast<DIDerivedType>(T)) {
       if(Derived->getBaseType()) {
         /*LLVM_DEBUG(errs() << "basetype: " << *Derived->getBaseType() << " " << Derived->getBaseType()->getName() << "\n");
@@ -646,9 +691,10 @@ namespace llvm {
       }
     }
     if (Offsets_begin == Offsets_end) {
-      //LLVM_DEBUG(errs() << "offsets_begin == offsets_end \n");
+      DLOG("offsets_begin == offsets_end");
     } else {
       Offset = *Offsets_begin;
+      DLOG("offset: " << Offset);
     }
     // derived non pointer types don't count, so we still haven't reached the final type if we encounter one of those
     if (Offsets_begin == Offsets_end  && (!isa<DIDerivedType>(T) || T->getTag() == dwarf::DW_TAG_pointer_type)) {
@@ -854,12 +900,13 @@ namespace llvm {
     DLOG("PT1: " << *PT1);
     DLOG("basetype: " << *PT1->getBaseType());
     T = PT1->getBaseType();
+    T = trimNonPointerDerivedTypes(T);
     if (auto PT = dyn_cast<DIDerivedType>(T); PT && PT->getBaseType()) {
       DLOG("GEP: " << *V);
       DLOG("PT: " << *PT);
       std::string Sep = ".";
       if (ArrayIdx.empty() && PT->getTag() == dwarf::DW_TAG_pointer_type) Sep = "->"; // if explicit array indexing, dereference is already done
-      return ptrName + ArrayIdx.str() + getFragmentTypeName(PT->getBaseType(), StructIndices.begin(), StructIndices.end(), FinalType, Sep);
+      return ptrName + ArrayIdx.str() + getFragmentTypeName(trimNonPointerDerivedTypes(PT->getBaseType()), StructIndices.begin(), StructIndices.end(), FinalType, Sep);
     }
     DLOG("non ptr type: " << *T);
     return ptrName + ArrayIdx.str() + getFragmentTypeName(T, StructIndices.begin(), StructIndices.end(), FinalType);
