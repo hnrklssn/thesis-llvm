@@ -53,7 +53,7 @@ private:
   std::pair<TypeCompareResult, DIType*> calibrateDebugType(const Type *Ty, DIType *DITy);
   std::string getNameFromDbgVariableIntrinsic(const DbgVariableIntrinsic *VI,
                                               DIType **const FinalType);
-  DbgVariableIntrinsic *getSingleDbgUser(const Value *V);
+  std::string tryGetNameFromDbgValue(const Value *V, DIType **FinalType);
   std::string
   getOriginalRelativePointerName(const Value *V, StringRef ArrayIdx,
                                  SmallVectorImpl<int64_t> &StructIndices,
