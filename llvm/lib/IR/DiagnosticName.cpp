@@ -711,30 +711,22 @@ namespace llvm {
     if (auto Comp = dyn_cast<DICompositeType>(T)) {
       auto elements = Comp->getElements();
       if (Comp->getTag() == dwarf::DW_TAG_array_type) {
-        if (auto Subr = dyn_cast<DISubrange>(elements[0])) {
-          if (auto CI = Subr->getCount().dyn_cast<ConstantInt*>()) {
-            if (Offset >= CI->getSExtValue()) {
-              errs() << "Offset: " << Offset << "\n";
-              errs() << "subr.getCount(): " << CI << "\n";
-              errs() << "subr: " << *Subr << "\n";
-              errs() << "elements: " << *Comp->getElements() << "\n";
-              errs() << "Comp: " << *Comp << "\n";
-              llvm_unreachable("not-enough-elements-in-array?");
+        LLVM_DEBUG({
+            auto Subr = cast<DISubrange>(elements[0]);
+            if (auto CI = Subr->getCount().dyn_cast<ConstantInt *>()) {
+              if (Offset >= CI->getSExtValue()) {
+                errs() << "Offset: " << Offset << "\n";
+                errs() << "subr.getCount(): " << CI << "\n";
+                errs() << "subr: " << *Subr << "\n";
+                errs() << "elements: " << *Comp->getElements() << "\n";
+                errs() << "Comp: " << *Comp << "\n";
+                DLOG("not-enough-elements-in-array?");
+              }
             }
-          }
-          return "[" + std::to_string(Offset) + "]" +
-                 getFragmentTypeName(Comp->getBaseType(), Offsets_begin + 1,
-                                     Offsets_end, FinalType);
-        } else {
-          errs() << "Offset: " << Offset << "\n";
-          errs() << "elements.size(): " << elements.size() << "\n";
-          errs() << "elements: " << *elements << "\n";
-          errs() << "Comp: " << *Comp << "\n";
-          for (auto elem : elements) {
-            errs() << "elem: " << *elem << "\n";
-          }
-          llvm_unreachable("no subrange in array type");
-        }
+        });
+        return "[" + std::to_string(Offset) + "]" +
+               getFragmentTypeName(Comp->getBaseType(), Offsets_begin + 1,
+                                   Offsets_end, FinalType);
       }
       if (Offset >= elements.size()) {
         errs() << "Offset: " << Offset << "\n";
@@ -862,21 +854,47 @@ namespace llvm {
     }
  }
 
-  /// A Value can have multiple debug non-identical debug intrinsics due to inlining
-  /// and potentially also due to aliasing in general.
-  /// TODO: Handle returning multiple aliasing names. Try closest dominance of an optional secondary value.
-  DbgVariableIntrinsic* DiagnosticNameGenerator::getSingleDbgUser(const Value *V) {
+
+  /// A Value can have multiple non-identical debug intrinsics due to inlining
+  /// and potentially also due to aliasing in general. We pick the first one with a
+  /// matching DIType, if the DIType is requested. Otherwise just the first one.
+  /// If no DbgVariableIntrinsic could be found (or one with matching DIType),
+  /// an empty string is returned.
+  /// TODO: Handle returning multiple aliasing names. Try closest dominance of an optional secondary value as tiebreaker?.
+  std::string DiagnosticNameGenerator::tryGetNameFromDbgValue(const Value *V, DIType **FinalType) {
     SmallVector<DbgVariableIntrinsic *, 4> DbgValues;
     testFindDbgUsers(DbgValues, V); // TODO upstream fix
     //findDbgUsers(DbgValues, V);
-    DbgVariableIntrinsic * DVI = nullptr;
-    for (auto &VI : DbgValues) {
-      //DLOG("VI: " << *VI);
-      //LLVM_DEBUG(printIntrinsic(VI));
-      if (DVI && VI->isIdenticalTo(DVI)) continue; // intrinsics can be duplicated
-      DVI = VI;
+    for (auto &DVI : DbgValues) {
+      // DLOG("DVI: " << *VI);
+      // LLVM_DEBUG(printIntrinsic(VI));
+
+      DLOG("found dvi for: " << *V);
+      auto Name = getNameFromDbgVariableIntrinsic(DVI, FinalType);
+      if (!FinalType)
+        return Name;
+      // hypothesis: most diffs here
+      if (*FinalType) {
+        DLOG("calibrating type");
+        DIType *T = calibrateDebugType(V->getType(), *FinalType).second;
+        if (!T) {
+          DLOG("mismatched types8 for " << *V << "\n");
+          DLOG("type: " << *V->getType() << "\n");
+          DLOG("dbg type ptr: " << *FinalType << "\n");
+          DLOG("dbg type: " << **FinalType << "\n");
+          LLVM_DEBUG(printDbgType(*FinalType));
+          if (auto I = dyn_cast<Instruction>(V)) {
+            auto F = I->getParent()->getParent();
+            DLOG("function: " << *F);
+          }
+        } else {
+          DLOG("matching types for " << *V << " T: " << *T);
+          *FinalType = T;
+          return Name;
+        }
+      }
     }
-    return DVI;
+    return "";
   }
 
   // TODO check which string type is appropriate here
@@ -1192,9 +1210,9 @@ namespace llvm {
       const auto [V, pred] = Queue.front();
       Queue.pop_front();
       Visited.insert(V);
-      const DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
-      if (DVI) {
-        return std::make_pair(getNameFromDbgVariableIntrinsic(DVI, FinalType), pred);
+      auto Name = tryGetNameFromDbgValue(V, FinalType);
+      if (!Name.empty()) {
+        return std::make_pair(Name, pred);
       }
 
       if (auto U = dyn_cast<User>(V)) {
@@ -1439,7 +1457,13 @@ namespace llvm {
       SmallVector<DIType*, 8> Users;
       SmallPtrSet<DIType *, 32> VisitedUsers;
       DIType *T = *FinalType;
-      if (auto Derived = dyn_cast<DIDerivedType>(T)) T = Derived->getBaseType();
+      // If pointer, we want to get the subtype relationship of the base type
+      if (auto Derived = dyn_cast<DIDerivedType>(trimNonPointerDerivedTypes(T)))
+        T = Derived->getBaseType();
+      if (!T) { // We're not getting anywhere with a void pointer
+        *FinalType = nullptr;
+        return name;
+      }
       findAllDITypeUses(T, Users, *M);
       // TODO: cap number of iterations to nesting distance if more performance
       // is needed
@@ -1510,11 +1534,29 @@ namespace llvm {
     if (auto BCast = dyn_cast<BitCastInst>(I)) {
       return getOriginalBitCastName(BCast, FinalType);
     }
+    if (auto PCast = dyn_cast<IntToPtrInst>(I)) {
+      auto Name = getOriginalNameImpl(PCast->getOperand(0), nullptr);
+      if (FinalType) {
+        // This search is unnecessary if we do not want the type to begin with
+        DebugInfoFinder DIF;
+        DIF.processModule(*M);
+        for (auto DITy : DIF.types()) {
+          if (compareValueTypeAndDebugType(PCast->getType(), DITy) == Match) {
+            DLOG("found ditype for " << *PCast);
+            DLOG("ditype: " << *DITy);
+            *FinalType = DITy;
+            break;
+          }
+        }
+      }
+      return Name;
+    }
     if (auto UI = dyn_cast<UnaryInstruction>(I)) {
       DLOG("unary: " << UI);
       // Most unary instructions don't  really alter the value that much
       // so our default here is to just use the name of the operand.
       // Small exception is bitcast which is handled above because it can destroy DITypes.
+      // TODO: turns out the above applies mostly to the numerical type casts. Break this out into a CastInst method.
       const Value *OP = UI->getOperand(0);
       std::string name = getOriginalNameImpl(OP, FinalType); // TODO Figure out if this could ever cause an infinite loop in welformed programs. My guess is no.
       if (isa<LoadInst>(UI) && !isa<GlobalVariable>(OP)) { // TODO: maybe advance FT even for GV?
@@ -1645,43 +1687,18 @@ namespace llvm {
 
   /// Reconstruct the original name of a value from debug symbols. Output string
   /// is in C syntax no matter the source language. If FinalType is given, it is
-  /// set to point to the DIType of the value EXCEPT if the value is a
-  /// GetElementPtrInst, where it will return the DIType of the value when
-  /// dereferenced.
+  /// set to point to the DIType of the value, if it can be found.
   std::string DiagnosticNameGenerator::getOriginalNameImpl(const Value *V,
                                   DIType **const FinalType) {
     assert(V != nullptr);
     LLVM_DEBUG(errs() << "gON: " << *V << "\n");
 
-    DbgVariableIntrinsic * DVI = getSingleDbgUser(V);
-    if (DVI) { // This is the gold standard, it will tell us the actual source name
-      DLOG("found dvi for: " << *V);
-      auto Name = getNameFromDbgVariableIntrinsic(DVI, FinalType);
-      // hypothesis: most diffs here
-      if (FinalType && *FinalType) {
-        DLOG("calibrating type");
-        DIType *T = calibrateDebugType(V->getType(), *FinalType).second;
-        if (!T) {
-          DLOG("mismatched types8 for " << *V << "\n");
-          DLOG("type: " << *V->getType() << "\n");
-          DLOG("dbg type ptr: " << *FinalType << "\n");
-          DLOG("dbg type: " << **FinalType << "\n");
-          LLVM_DEBUG(printDbgType(*FinalType));
-          if (auto I = dyn_cast<Instruction>(V)) {
-            auto F = I->getParent()->getParent();
-            DLOG("function: " << *F);
-          }
-          llvm_unreachable("mismatched types8");
-        } else {
-          DLOG("matching types for " << *V << " T: " << *T);
-          *FinalType = T;
-        }
-      }
+    std::string Name = tryGetNameFromDbgValue(V, FinalType);
+    if (!Name.empty()) { // This is the gold standard, it will tell us the actual source name
       return Name;
     }
     //LLVM_DEBUG(errs() << "gON: no DVI" << *V << "\n");
 
-    std::string Name;
     if (auto I = dyn_cast<Instruction>(V)) {
       Name = getOriginalInstructionName(I, FinalType);
     } else if (auto C = dyn_cast<Constant>(V))
