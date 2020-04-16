@@ -78,13 +78,16 @@ int main(int argc, const char **argv) {
   for (auto &part : commandList)
     command += " " + part;
 
-  // todo use diff seperator?
+  SmallString<128> path;
+  llvm::sys::fs::current_path(path);
+  llvm::outs() << path;
 
-  // allow moving the binary and still finding clang builtin headers.
-  ArgumentsAdjuster ardj1 =
-      getInsertArgumentAdjuster("-I/usr/local/bin/../lib/clang/10.0.0/include");
-  Tool.appendArgumentsAdjuster(ardj1);
+  // OverlayFileSystem->getCurrentWorkingDirectory
+  // llvm::outs() << std::filesystem::current_path();
   // you can bundle the headers needed instead of looking for them
+  ArgumentsAdjuster ardj2 = getInsertArgumentAdjuster(
+      "-resource-dir=/Users/Catarina/thesis-llvm/build/lib/clang/10.0.0");
+  Tool.appendArgumentsAdjuster(ardj2);
 
   llvm::outs() << "cd " << compilationDB.Directory << " && " << command << "\n";
 
