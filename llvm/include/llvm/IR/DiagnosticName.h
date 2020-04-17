@@ -46,6 +46,7 @@ private:
                                   std::string Sep = ".");
   std::string getFragmentTypeName(DIType *T, const int64_t *Offsets_begin,
                                   const int64_t *Offsets_end,
+                                  const Type *ValueTy,
                                   DIType **FinalType,
                                   std::string Sep = ".");
   std::pair<TypeCompareResult, uint32_t>
@@ -58,9 +59,9 @@ private:
   getOriginalRelativePointerName(const Value *V, StringRef ArrayIdx,
                                  SmallVectorImpl<int64_t> &StructIndices,
                                  DIType **FinalType);
-  std::string getFragmentNameNoDbg(const Value *V, const int64_t *idx_begin,
+  std::string getFragmentNameNoDbg(const Type *Ty, const int64_t *idx_begin,
                                    const int64_t *idx_end);
-  std::string getFragmentNameNoDbg(const Value *V, const Use *idx_begin,
+  std::string getFragmentNameNoDbg(const Type *Ty, const Use *idx_begin,
                                    const Use *idx_end);
   std::string getOriginalPointerName(const GetElementPtrInst *const GEP,
                                      DIType **const FinalType);
