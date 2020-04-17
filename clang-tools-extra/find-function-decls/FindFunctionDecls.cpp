@@ -80,13 +80,13 @@ int main(int argc, const char **argv) {
 
   SmallString<128> path;
   llvm::sys::fs::current_path(path);
-  llvm::outs() << path;
 
-  // OverlayFileSystem->getCurrentWorkingDirectory
-  // llvm::outs() << std::filesystem::current_path();
-  // you can bundle the headers needed instead of looking for them
-  ArgumentsAdjuster ardj2 = getInsertArgumentAdjuster(
-      "-resource-dir=/Users/Catarina/thesis-llvm/build/lib/clang/10.0.0");
+  const std::string a = "-resource-dir=";
+  const std::string b = path.str();
+  const std::string c = "/builtins";
+  const std::string d = a + b + c;
+  const char *myStr = d.c_str();
+  ArgumentsAdjuster ardj2 = getInsertArgumentAdjuster(myStr);
   Tool.appendArgumentsAdjuster(ardj2);
 
   llvm::outs() << "cd " << compilationDB.Directory << " && " << command << "\n";
