@@ -36,6 +36,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/IR/Use.h"
@@ -233,23 +234,29 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
       }
       TypeCompareResult res = Match;
       if (DITy->getTag() == dwarf::DW_TAG_union_type) {
+        DLOG("union type: " << *DITy);
         auto DIUnionTy = cast<DICompositeType>(DITy);
         if (auto StructTy = dyn_cast<StructType>(Ty)) {
-          // there is no union type in LLVM, just a struct of the largest element size
-          assert(StructTy->getNumElements() == 1);
+          // there is no union type in LLVM, just a struct of the largest
+          // element size
+          if (!StructTy->getNumElements()) {
+            return IncompleteTypeMatch;
+          }
           auto Elem = StructTy->getElementType(0);
           for (auto DIUnionElem : DIUnionTy->getElements()) {
-            if (compareValueTypeAndDebugTypeInternal(Elem, cast<DIType>(DIUnionElem), EquivalentStructTypes) == Match)
+            DLOG("union elem: " << *DIUnionElem);
+            if (compareValueTypeAndDebugTypeInternal(
+                    Elem, cast<DIType>(DIUnionElem), EquivalentStructTypes) ==
+                Match)
               return Match;
-           }
-          return IncompleteTypeMatch;
-          // Unions aren't very typesafe, just hope that this is a struct field that's not needed right now
+          }
+          res = IncompleteTypeMatch;
+          // Unions aren't very typesafe, just hope that this is a struct field
+          // that's not needed right now
           // TODO: look into supporting union bitcast pattern
+        } else {
+          res = NoMatch;
         }
-        DLOG("union type: " << *DIUnionTy);
-        printValueType(Ty);
-        printDbgType(DIUnionTy);
-        llvm_unreachable("union type!");
       }
       if (auto StructTy = dyn_cast<StructType>(Ty)) {
         if (StructTy->getNumElements() == 0)
@@ -259,6 +266,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
                             << *DITy << "\n");
           return NoMatch;
         }
+        DLOG("struct dity: " << *DITy);
         auto DIStructTy = cast<DICompositeType>(DITy);
         const auto PrevResult = EquivalentStructTypes.find(DIStructTy);
         if (PrevResult != EquivalentStructTypes.end()) {
@@ -272,13 +280,27 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
           DLOG("curr: " << *StructTy);
           return NoMatch;
         }
+        DLOG("struct dity: " << *DIStructTy);
+        DLOG("structty: " << *StructTy);
+        DINodeArray Elems = DIStructTy->getElements();
+        for (auto MD : Elems) {
+          if (MD) {
+            DLOG("MD: " << *MD);
+          } else {
+            DLOG("MD null");
+          }
+        }
+        if (Elems.empty()) {
+          DLOG("elems empty");
+        }
+        DLOG("num operands: " << Elems.size());
         EquivalentStructTypes.insert(std::make_pair(DIStructTy, StructTy));
         if (StructTy->getNumElements() !=
-            DIStructTy->getElements()->getNumOperands()) {
+            DIStructTy->getElements().size()) {
           LLVM_DEBUG(errs() << "value type is struct with "
                             << StructTy->getNumElements() << " elements, "
                             << " but debug type is struct with "
-                            << DIStructTy->getElements()->getNumOperands()
+                            << DIStructTy->getElements().size()
                             << " elements\n");
           return NoMatch;
         }
@@ -305,6 +327,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
       } else if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
         switch (DITy->getTag()) {
         case dwarf::DW_TAG_pointer_type: {
+          DLOG("pointer dity: " << *DITy);
           auto DIPtrTy = cast<DIDerivedType>(DITy);
           if (!trimNonPointerDerivedTypes(DIPtrTy->getBaseType()))
             return IncompleteTypeMatch; // void pointer afaict
@@ -360,6 +383,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
         } else if (DITy->getTag() == dwarf::DW_TAG_enumeration_type) {
           int64_t MaxEnum = 0;
           for (auto Elem : cast<DICompositeType>(DITy)->getElements()) {
+            DLOG("enumerator: " << *Elem);
             auto EnumValue = cast<DIEnumerator>(Elem)->getValue();
             MaxEnum = std::max(MaxEnum, EnumValue);
           }
@@ -406,10 +430,15 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
           }
           for (unsigned i = 0; i < NumParams; i++) {
 
-            res = std::min(res, compareValueTypeAndDebugTypeInternal(
-                                    FuncTy->getParamType(i),
-                                    cast<DIType>(DITypes[i + 1]),
-                                    EquivalentStructTypes));
+            if (DITypes) {
+              DLOG("param dity: " << *DITypes[i + 1]);
+              res = std::min(res, compareValueTypeAndDebugTypeInternal(
+                                      FuncTy->getParamType(i),
+                                      cast<DIType>(DITypes[i + 1]),
+                                      EquivalentStructTypes));
+            } else {
+              llvm_unreachable("DITypes null");
+            }
             if (!res) {
               DLOG("param type mismatch: " << i);
             }
@@ -532,13 +561,25 @@ std::pair<TypeCompareResult, uint32_t> DiagnosticNameGenerator::isPointerChainTo
       }
       Visited.insert(DITy);
       if (auto Comp = dyn_cast<DICompositeType>(DITy)) {
-        //LLVM_DEBUG(errs() << "composite type: " << *Comp << "\n");
-        DITy = cast<DIType>(Comp->getElements()[0]);
-        //LLVM_DEBUG(errs() << "first elem: " << *DITy << "\n");
+        switch (Comp->getTag()) {
+        case dwarf::DW_TAG_enumeration_type:
+             LLVM_DEBUG(errs() << "could not match types\n");
+             LLVM_DEBUG(errs() << "leaving " << __FUNCTION__ << "\n");
+             return std::make_pair(NoMatch, nullptr);
+        case dwarf::DW_TAG_array_type:
+          DITy = Comp->getBaseType();
+          break;
+        default:
+          if (Comp->getElements().empty()) {
+            DITy = nullptr;
+            break;
+          }
+          DLOG("elements[0]" << *Comp->getElements()[0]);
+          DITy = cast<DIType>(Comp->getElements()[0]);
+          break;
+        }
       } else if (auto Derived = dyn_cast<DIDerivedType>(DITy)) {
-        //LLVM_DEBUG(errs() << "derived type: " << *Derived << "\n");
         DITy = Derived->getBaseType();
-        //LLVM_DEBUG(errs() << "base type: " << *DITy << "\n");
       } else {
         LLVM_DEBUG(errs() << "could not match types\n");
         LLVM_DEBUG(errs() << "leaving " << __FUNCTION__ << "\n");
@@ -680,8 +721,11 @@ std::string llvm::DiagnosticNameGenerator::getFragmentTypeName(DIType *const T, 
 
 namespace llvm {
   /// Get rest of name based on the type of the base value, and the offset.
-  std::string DiagnosticNameGenerator::getFragmentTypeName(DIType *T, const int64_t *Offsets_begin, const int64_t *Offsets_end, DIType **FinalType, std::string Sep/* = "."*/) {
+  std::string DiagnosticNameGenerator::getFragmentTypeName(DIType *T, const int64_t *Offsets_begin, const int64_t *Offsets_end, const Type *ValueTy, DIType **FinalType, std::string Sep/* = "."*/) {
     int64_t Offset = -1;
+    if (ValueTy) {
+      DLOG("valuety: " << *ValueTy);
+    }
     if (!T) {
       DLOG("fragment type null");
       return "fragment-type-null";
@@ -704,13 +748,19 @@ namespace llvm {
     }
     // derived non pointer types don't count, so we still haven't reached the final type if we encounter one of those
     if (Offsets_begin == Offsets_end  && (!isa<DIDerivedType>(T) || T->getTag() == dwarf::DW_TAG_pointer_type)) {
-      if(FinalType) *FinalType = T;
+      if(FinalType){
+        *FinalType = T;
+        DLOG("setting finaltype to " << *T);
+      }
       return "";
     }
     //LLVM_DEBUG(errs() << "getFragmentTypeName offset: " << Offset << "\n");
     if (auto Comp = dyn_cast<DICompositeType>(T)) {
+      DLOG("Comp");
       auto elements = Comp->getElements();
-      if (Comp->getTag() == dwarf::DW_TAG_array_type) {
+      switch (Comp->getTag()) {
+      case dwarf::DW_TAG_array_type:
+        DLOG("array");
         LLVM_DEBUG({
             auto Subr = cast<DISubrange>(elements[0]);
             if (auto CI = Subr->getCount().dyn_cast<ConstantInt *>()) {
@@ -726,28 +776,65 @@ namespace llvm {
         });
         return "[" + std::to_string(Offset) + "]" +
                getFragmentTypeName(Comp->getBaseType(), Offsets_begin + 1,
-                                   Offsets_end, FinalType);
-      }
-      if (Offset >= elements.size()) {
-        errs() << "Offset: " << Offset << "\n";
-        errs() << "elements.size(): " << elements.size() << "\n";
-        errs() << "elements: " << *elements << "\n";
-        errs() << "Comp: " << *Comp << "\n";
+                                   Offsets_end, ValueTy->getArrayElementType(), FinalType);
+      case dwarf::DW_TAG_union_type: {
+        DLOG("union");
+        Type *NextType = ValueTy->getContainedType(Offset);
+        DIType *BestMatch = nullptr;
         for (auto elem : elements) {
-          errs() << "elem: " << *elem << "\n";
+          auto UnionElem = cast<DIType>(elem);
+          auto res = compareValueTypeAndDebugType(NextType, UnionElem);
+          if (res == Match) {
+            BestMatch = UnionElem;
+            DLOG("found complete union match: " << *UnionElem);
+            break;
+          } else if (res == IncompleteTypeMatch) {
+            DLOG("incomplete type match");
+            BestMatch = UnionElem;
+          }
         }
-        llvm_unreachable("not-enough-elements-in-struct?");
+        if (!BestMatch) {
+          if (FinalType) *FinalType = nullptr;
+          DLOG("found no union match");
+          printDbgType(T);
+          printValueType(ValueTy);
+          return getFragmentNameNoDbg(NextType, Offsets_begin + 1, Offsets_end);
+        }
+        DLOG("found some match: " << *BestMatch);
+        return getFragmentTypeName(BestMatch, Offsets_begin + 1, Offsets_end,
+                                   NextType,
+                                   FinalType);
       }
-      if(auto NextT = dyn_cast<DIDerivedType>(elements[Offset])) {
-        //LLVM_DEBUG(errs() << "nextT: " << *NextT << "\n");
-        return Sep + NextT->getName().str() + getFragmentTypeName(NextT, Offsets_begin + 1, Offsets_end, FinalType);
-      } else {
-        errs() << "non derived struct member: " << elements[Offset] << "\n";
-        errs() << "struct: " << Comp << "\n";
-        llvm_unreachable("Non derived type as struct member? Should not happen");
+      default:
+        DLOG("default");
+        if (Offset >= elements.size()) {
+          errs() << "Offset: " << Offset << "\n";
+          errs() << "elements.size(): " << elements.size() << "\n";
+          errs() << "elements: " << *elements << "\n";
+          errs() << "Comp: " << *Comp << "\n";
+          for (auto elem : elements) {
+            errs() << "elem: " << *elem << "\n";
+          }
+          llvm_unreachable("not-enough-elements-in-struct?");
+        }
+        if (auto NextT = dyn_cast<DIDerivedType>(elements[Offset])) {
+          // LLVM_DEBUG(errs() << "nextT: " << *NextT << "\n");
+          return Sep + NextT->getName().str() +
+                 getFragmentTypeName(NextT, Offsets_begin + 1, Offsets_end,
+                                     ValueTy->getContainedType(Offset), FinalType);
+        } else {
+          errs() << "non derived struct member: " << elements[Offset] << "\n";
+          errs() << "struct: " << Comp << "\n";
+          llvm_unreachable(
+              "Non derived type as struct member? Should not happen");
+        }
       }
+      llvm_unreachable("wtf");
     } else if (auto Derived = dyn_cast<DIDerivedType>(T)) {
-      if (FinalType) *FinalType = Derived;
+      if (FinalType) {
+        *FinalType = Derived;
+        DLOG("setting finaltype to " << *Derived);
+      }
       if (!Derived->getBaseType()) {
         if (Offsets_begin != Offsets_end)
           return "[" + std::to_string(Offset) + "]";
@@ -759,8 +846,13 @@ namespace llvm {
         return "[" + std::to_string(Offset) + "]";
       }
       // transparently step through derived type without iterating offset
-      return getFragmentTypeName(Derived->getBaseType(), Offsets_begin, Offsets_end, FinalType, Sep);
+      DLOG("non-ptr derived, skipping");
+      return getFragmentTypeName(Derived->getBaseType(), Offsets_begin, Offsets_end, ValueTy, FinalType, Sep);
     }
+    DLOG("fallback");
+    DLOG("T: " << *T);
+    DLOG("valuety: " << *ValueTy);
+    DLOG("offset: " << Offset);
     return ""; // This is the end of the chain, the type name is no longer part of the variable name
   }
 
@@ -870,18 +962,18 @@ namespace llvm {
       // LLVM_DEBUG(printIntrinsic(VI));
 
       DLOG("found dvi for: " << *V);
-      auto Name = getNameFromDbgVariableIntrinsic(DVI, FinalType);
+      DIType *T = nullptr;
+      auto Name = getNameFromDbgVariableIntrinsic(DVI, &T);
       if (!FinalType)
         return Name;
       // hypothesis: most diffs here
-      if (*FinalType) {
+      if (T) {
         DLOG("calibrating type");
-        DIType *T = calibrateDebugType(V->getType(), *FinalType).second;
+        T = calibrateDebugType(V->getType(), T).second;
         if (!T) {
           DLOG("mismatched types8 for " << *V << "\n");
           DLOG("type: " << *V->getType() << "\n");
-          DLOG("dbg type ptr: " << *FinalType << "\n");
-          DLOG("dbg type: " << **FinalType << "\n");
+          DLOG("name: " << Name);
           LLVM_DEBUG(printDbgType(*FinalType));
           if (auto I = dyn_cast<Instruction>(V)) {
             auto F = I->getParent()->getParent();
@@ -904,10 +996,11 @@ namespace llvm {
     DIType *T = nullptr;
     LLVM_DEBUG(errs() << "getting pointer prefix for " << *V << "\n");
     std::string ptrName;
-    if (auto LI = dyn_cast<LoadInst>(V))
+    if (auto LI = dyn_cast<LoadInst>(V)) {
       ptrName = getOriginalNameImpl(LI->getPointerOperand(), &T);
-    else
+    } else {
       ptrName = getOriginalNameImpl(V, &T);
+    }
     DLOG("prefix: " << ptrName << " arrayidx: " << ArrayIdx);
     if (!T) return ptrName + "->{unknownField}";
     /*if (!(T = calibrateDebugType(V->getType(), T))) {
@@ -926,19 +1019,26 @@ namespace llvm {
     T = trimNonPointerDerivedTypes(T);
     if (!T) {
       DLOG("basetype null for " << *V);
-      return ptrName + ArrayIdx.str() + getFragmentNameNoDbg(V, StructIndices.begin(), StructIndices.end());
+      return ptrName + ArrayIdx.str() + getFragmentNameNoDbg(V->getType(), StructIndices.begin(), StructIndices.end());
     } else {
       DLOG("basetype: " << *T);
     }
+    Type *ValueTy = V->getType();
     if (auto PT = dyn_cast<DIDerivedType>(T); PT && PT->getBaseType()) {
       DLOG("GEP: " << *V);
       DLOG("PT: " << *PT);
       std::string Sep = ".";
       if (ArrayIdx.empty() && PT->getTag() == dwarf::DW_TAG_pointer_type) Sep = "->"; // if explicit array indexing, dereference is already done
-      return ptrName + ArrayIdx.str() + getFragmentTypeName(trimNonPointerDerivedTypes(PT->getBaseType()), StructIndices.begin(), StructIndices.end(), FinalType, Sep);
+      ValueTy = cast<PointerType>(ValueTy)->getElementType();
+      return ptrName + ArrayIdx.str() +
+             getFragmentTypeName(trimNonPointerDerivedTypes(PT->getBaseType()),
+                                 StructIndices.begin(), StructIndices.end(),
+                                 ValueTy, FinalType, Sep);
     }
     DLOG("non ptr type: " << *T);
-    return ptrName + ArrayIdx.str() + getFragmentTypeName(T, StructIndices.begin(), StructIndices.end(), FinalType);
+    return ptrName + ArrayIdx.str() +
+           getFragmentTypeName(T, StructIndices.begin(), StructIndices.end(),
+                               ValueTy, FinalType);
   }
 
   template <typename IdxType>
@@ -977,9 +1077,8 @@ namespace llvm {
   }
 
   std::string DiagnosticNameGenerator::getFragmentNameNoDbg(
-      const Value *V, const int64_t *idx_begin, const int64_t *idx_end) {
+      const Type *Ty, const int64_t *idx_begin, const int64_t *idx_end) {
     std::string name = "";
-    Type *Ty = V->getType();
     for (auto itr = idx_begin; itr < idx_end; itr++) {
       auto Idx = *itr;
       auto IdxName = std::to_string(Idx);
@@ -989,9 +1088,8 @@ namespace llvm {
   }
 
   std::string DiagnosticNameGenerator::getFragmentNameNoDbg(
-      const Value *V, const Use *idx_begin, const Use *idx_end) {
+      const Type *Ty, const Use *idx_begin, const Use *idx_end) {
     std::string name = "";
-    Type *Ty = V->getType();
     for (auto itr = idx_begin; itr < idx_end; itr++) {
       auto Idx = itr->get();
       auto IdxName = getOriginalNameImpl(Idx, nullptr);
@@ -1000,12 +1098,28 @@ namespace llvm {
     return name;
   }
 
+  Type *getTypeAtOffset(Type *Ty, const SmallVectorImpl<int64_t> &Offsets) {
+    for (auto Idx : Offsets) {
+      if (auto StructTy = dyn_cast<StructType>(Ty)) {
+        Ty = StructTy->getElementType(Idx);
+      } else if (auto ArrayTy = dyn_cast<ArrayType>(Ty)) {
+        Ty = ArrayTy->getElementType();
+      } else {
+        DLOG("valuety: " << *Ty);
+        llvm_unreachable("unexpected value type");
+      }
+    }
+    return Ty;
+  }
+
   // TODO: look into simplifying this, it has grown organically when encountering more and more cases
   std::string DiagnosticNameGenerator::getOriginalPointerName(const GetElementPtrInst *const GEP, DIType **const FinalType) {
     LLVM_DEBUG(errs() << "GEP!\n");
     LLVM_DEBUG(GEP->dump());
     auto OP = GEP->getPointerOperand();
-    getFragmentNameNoDbg(OP, GEP->idx_begin(), GEP->idx_end());
+    auto ValueTy =
+        cast<PointerType>(GEP->getPointerOperandType())->getElementType();
+    getFragmentNameNoDbg(OP->getType(), GEP->idx_begin(), GEP->idx_end());
     DLOG("operand: " << *OP);
     std::string ArrayIdx = "";
     auto FirstOffset = GEP->idx_begin()->get();
@@ -1029,72 +1143,24 @@ namespace llvm {
     }
     SmallVector<int64_t, 2> Indices;
     std::string name = "";
+    if (!GEP->idx_begin()) {
+      llvm_unreachable("idx begin null");
+    }
     const Use *idx_last_const = getConstOffsets(GEP->idx_begin() + 1, GEP->idx_end(), Indices); // skip first offset, it doesn't matter if it's constant
     DIType *T = nullptr;
     if (auto LI = dyn_cast<LoadInst>(OP)) {
       // This means our pointer originated in the dereference of another pointer
       DLOG("getting relative ptr");
       name += getOriginalRelativePointerName(LI, ArrayIdx, Indices, &T);
+      ValueTy = getTypeAtOffset(ValueTy, Indices);
       DLOG("back from load: " << *LI << " GEP: " << *GEP);
       if (!T) DLOG("T == nullptr");
     } else if (auto GEP2 = dyn_cast<GetElementPtrInst>(OP)) {
       // This means our pointer is some linear offset of another pointer, e.g. a subfield of a struct, relative to the pointer to the base of the struct
       DLOG("getting relative ptr");
       name += getOriginalRelativePointerName(GEP2, ArrayIdx, Indices, &T);
-      /*} else if (auto Global = dyn_cast<GlobalValue>(OP)) { // TODO: test this
-      if (Global->hasAtLeastLocalUnnamedAddr()) {
-        auto name = getOriginalNameImpl(Global, &T);
-        if (T) {
-          errs() << "ditype from global: " << *T << "\n";
-        }
-        errs() << "global GEP name: " << name << "\n";
-        //return name;
-        }*/
+      ValueTy = getTypeAtOffset(ValueTy, Indices);
       DLOG("back from inner GEP: " << *GEP2 << " outer GEP: " << *GEP);
-      /*} else if (DbgVariableIntrinsic *DVI = getSingleDbgUser(OP)) {
-      // Base pointer is just a variable, fetch its debug info
-      DLOG("DVI: " << *DVI);
-
-      if(auto Val = dyn_cast<DbgValueInst>(DVI)) {
-        auto Var = Val->getVariable();
-        DLOG("var: " << *Var);
-        auto Type = Var->getType();
-        LLVM_DEBUG(errs() << "dbg type1: " << *Type << "\n");
-        if (!compareValueTypeAndDebugType(OP->getType(), Type)) {
-          DLOG("mismatched types3 for " << *OP);
-          DLOG("type: " << *OP->getType());
-          DLOG("dbg type2: " << *Type);
-          DLOG("\n");
-          printValueType(OP->getType());
-          LLVM_DEBUG(errs() << "\n\n");
-          printDbgType(Type);
-          llvm_unreachable("mismatched types3");
-        } else {
-          LLVM_DEBUG(errs() << "matching types for " << *OP << "\n");
-        }
-        auto BaseType = cast<DIDerivedType>(Type)->getBaseType();
-        std::string Sep = ".";
-        if (ArrayIdx.empty()) Sep = "->";
-        DLOG("getting fragment type");
-        name += Var->getName().str() + ArrayIdx + getFragmentTypeName(BaseType, Indices.begin(), Indices.end(), &T, Sep);
-      } else if(auto Decl = dyn_cast<DbgDeclareInst>(DVI)) {
-        auto Var = Decl->getVariable();
-        auto Type = Var->getType();
-        DLOG("calibrating type");
-        if (!(Type = calibrateDebugType(OP->getType(), Type).second)) {
-          LLVM_DEBUG(errs() << "mismatched types4 for " << *OP << "\n");
-          LLVM_DEBUG(errs() << "type: " << *OP->getType() << "\n");
-          LLVM_DEBUG(errs() << "dbg type: " << *Var->getType() << "\n");
-          llvm_unreachable("mismatched types4");
-        } else {
-          LLVM_DEBUG(errs() << "matching types for " << *OP << "\n");
-        }
-        auto BaseType = cast<DIDerivedType>(Type)->getBaseType();
-        DLOG("getting fragment type");
-        name += Var->getName().str() + ArrayIdx + getFragmentTypeName(BaseType, Indices.begin(), Indices.end(), &T);
-      } else {
-        llvm_unreachable("unknown-dbg-variable-intrinsic");
-        }*/
     } else {
       DLOG("fallback attempt");
       name = getOriginalNameImpl(OP, &T);
@@ -1102,7 +1168,7 @@ namespace llvm {
         // The code was compiled without debug info, or was optimised to the
         // point where it's no longer accessible. Give best effort indexing.
         DLOG("getting fragment type");
-        return name + getFragmentNameNoDbg(OP, GEP->idx_begin(), GEP->idx_end());
+        return name + getFragmentNameNoDbg(OP->getType(), GEP->idx_begin(), GEP->idx_end());
       }
       if (T && !compareValueTypeAndDebugType(OP->getType(), T)) {
         LLVM_DEBUG(errs() << "mismatched types5 for " << *OP << "\n");
@@ -1116,27 +1182,43 @@ namespace llvm {
       if (!OP->getType()->isPointerTy()) {
         llvm_unreachable("non-pointer OP in GEP");
       }
+      T = trimNonPointerDerivedTypes(T);
+      if (T)
+        DLOG("T: " << *T);
       auto BaseType = T->getTag() == dwarf::DW_TAG_array_type
                           ? T
                           : cast<DIDerivedType>(T)->getBaseType();
+      if (BaseType) {
+        DLOG("baseType: " << *BaseType);
+      } else {
+        DLOG("basetype null");
+      }
       T = nullptr;
       DLOG("getting fragment type");
-      name += ArrayIdx + getFragmentTypeName(BaseType, Indices.begin(), Indices.end(), &T);
+      name += ArrayIdx + getFragmentTypeName(BaseType, Indices.begin(), Indices.end(), ValueTy, &T);
+      ValueTy = getTypeAtOffset(ValueTy, Indices);
     }
     DLOG("back in GEP: " << *GEP << " OP: " << *OP);
+    DLOG("name so far: " << name);
     if (T) DLOG("T: " << *T);
     else DLOG("T == null");
 
-    /*if (idx_last_const < GEP->idx_end() && T) {
-      // We have already handled the offset of the pointer type,
-      // skip it so the next offset indexes into the inner type
-      T = cast<DIDerivedType>(T)->getBaseType();
-      }*/
     // in case not all offsets (excluding the first one) were constant.
     // this can happen for example with arrays in structs
     while(idx_last_const < GEP->idx_end() && T) {
       DLOG("naming non const idx: " << *idx_last_const->get());
       name += "[" + getOriginalNameImpl(idx_last_const->get(), nullptr) + "]";
+
+      DLOG("typing non const idx: " << *idx_last_const->get());
+      if (auto ArrayTy = dyn_cast<ArrayType>(ValueTy)) {
+        ValueTy = ArrayTy->getArrayElementType();
+      } else if (auto CompTy = dyn_cast<CompositeType>(ValueTy)) {
+        DLOG("comp type: " << *CompTy);
+        ValueTy = CompTy->getTypeAtIndex(idx_last_const->get());
+      } else {
+        DLOG("valuety: " << *ValueTy);
+        llvm_unreachable("unexpected value type");
+      }
 
       if (auto Derived = dyn_cast<DIDerivedType>(T)) T = Derived->getBaseType();
       else if (auto Composite = dyn_cast<DICompositeType>(T)) T = Composite->getBaseType();
@@ -1149,7 +1231,8 @@ namespace llvm {
       idx_last_const = getConstOffsets(idx_last_const + 1, GEP->idx_end(), Indices);
 
       DIType *T2 = nullptr; // avoid aliasing T
-      name += getFragmentTypeName(T, Indices.begin(), Indices.end(), &T2);
+      name += getFragmentTypeName(T, Indices.begin(), Indices.end(), ValueTy, &T2);
+      ValueTy = getTypeAtOffset(ValueTy, Indices);
       T = T2;
       if (T) DLOG("T: " << *T);
     }
@@ -1232,6 +1315,7 @@ namespace llvm {
   }
 
   std::string DiagnosticNameGenerator::getOriginalCallName(const CallBase *Call, DIType **FinalType) { // TODO: handle more intrinsics
+    // TODO: return finaltype
     DLOG("call: " << *Call);
     std::string FuncName = Call->getName().str() + " (fallback name)";
     auto CalledFunc = Call->getCalledFunction();
@@ -1494,9 +1578,9 @@ namespace llvm {
       DLOG("did not find matching type!");
     } else {
       DLOG("BC type:");
-      printValueType(BC->getType());
+      LLVM_DEBUG(printValueType(BC->getType()));
       DLOG("OP type:");
-      printValueType(OP->getType());
+      LLVM_DEBUG(printValueType(OP->getType()));
       DLOG("BB: " << *BC->getParent());
       if (auto I = dyn_cast<Instruction>(OP); I && I->getParent() != BC->getParent()) {
         DLOG("OP-BB: " << *I->getParent());
