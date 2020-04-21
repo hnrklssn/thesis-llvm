@@ -201,7 +201,7 @@ llvm::DiagnosticNameGenerator llvm::DiagnosticNameGenerator::create(Module *M) {
   return DiagnosticNameGenerator(M, nullptr);
 }
 llvm::DiagnosticNameGenerator::DiagnosticNameGenerator(Module *M, DIBuilder *B)
-    : M(M), Builder(B) {}
+  : M(M), Builder(B) {}
 
 llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *BaseTy) {
     if (!Builder) return nullptr;
@@ -228,9 +228,12 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
       case dwarf::DW_TAG_member:
       case dwarf::DW_TAG_const_type:
       case dwarf::DW_TAG_atomic_type:
-        return compareValueTypeAndDebugTypeInternal(
-            Ty, cast<DIDerivedType>(DITy)->getBaseType(),
-            EquivalentStructTypes);
+        auto NextTy = cast<DIDerivedType>(DITy)->getBaseType();
+        if (!NextTy) { // void type
+          return llvm::IncompleteTypeMatch;
+        }
+        return compareValueTypeAndDebugTypeInternal(Ty, NextTy,
+                                                    EquivalentStructTypes);
       }
       TypeCompareResult res = Match;
       if (DITy->getTag() == dwarf::DW_TAG_union_type) {
@@ -754,7 +757,6 @@ namespace llvm {
       }
       return "";
     }
-    //LLVM_DEBUG(errs() << "getFragmentTypeName offset: " << Offset << "\n");
     if (auto Comp = dyn_cast<DICompositeType>(T)) {
       DLOG("Comp");
       auto elements = Comp->getElements();
@@ -779,6 +781,7 @@ namespace llvm {
                                    Offsets_end, ValueTy->getArrayElementType(), FinalType);
       case dwarf::DW_TAG_union_type: {
         DLOG("union");
+        DLOG("valuety: " << *ValueTy);
         Type *NextType = ValueTy->getContainedType(Offset);
         DIType *BestMatch = nullptr;
         for (auto elem : elements) {
@@ -796,8 +799,8 @@ namespace llvm {
         if (!BestMatch) {
           if (FinalType) *FinalType = nullptr;
           DLOG("found no union match");
-          printDbgType(T);
-          printValueType(ValueTy);
+          LLVM_DEBUG(printDbgType(T));
+          LLVM_DEBUG(printValueType(ValueTy));
           return getFragmentNameNoDbg(NextType, Offsets_begin + 1, Offsets_end);
         }
         DLOG("found some match: " << *BestMatch);
@@ -818,7 +821,7 @@ namespace llvm {
           llvm_unreachable("not-enough-elements-in-struct?");
         }
         if (auto NextT = dyn_cast<DIDerivedType>(elements[Offset])) {
-          // LLVM_DEBUG(errs() << "nextT: " << *NextT << "\n");
+          DLOG("valuety: " << *ValueTy);
           return Sep + NextT->getName().str() +
                  getFragmentTypeName(NextT, Offsets_begin + 1, Offsets_end,
                                      ValueTy->getContainedType(Offset), FinalType);
@@ -958,9 +961,14 @@ namespace llvm {
     testFindDbgUsers(DbgValues, V); // TODO upstream fix
     //findDbgUsers(DbgValues, V);
     for (auto &DVI : DbgValues) {
-      // DLOG("DVI: " << *VI);
       // LLVM_DEBUG(printIntrinsic(VI));
 
+      DLOG("DVI: " << DVI);
+      if (!V) {
+        DLOG("V null");
+        llvm_unreachable("V cannot be null");
+      }
+      DLOG("V ptr: " << V);
       DLOG("found dvi for: " << *V);
       DIType *T = nullptr;
       auto Name = getNameFromDbgVariableIntrinsic(DVI, &T);
@@ -969,6 +977,7 @@ namespace llvm {
       // hypothesis: most diffs here
       if (T) {
         DLOG("calibrating type");
+        *FinalType = T; // save T for debug logs
         T = calibrateDebugType(V->getType(), T).second;
         if (!T) {
           DLOG("mismatched types8 for " << *V << "\n");
@@ -979,6 +988,7 @@ namespace llvm {
             auto F = I->getParent()->getParent();
             DLOG("function: " << *F);
           }
+          *FinalType = nullptr;
         } else {
           DLOG("matching types for " << *V << " T: " << *T);
           *FinalType = T;
@@ -996,13 +1006,26 @@ namespace llvm {
     DIType *T = nullptr;
     LLVM_DEBUG(errs() << "getting pointer prefix for " << *V << "\n");
     std::string ptrName;
+    Type *ValueTy = V->getType();
+    DLOG("valuety: " << *ValueTy);
     if (auto LI = dyn_cast<LoadInst>(V)) {
       ptrName = getOriginalNameImpl(LI->getPointerOperand(), &T);
     } else {
       ptrName = getOriginalNameImpl(V, &T);
+      DLOG("valuety: " << *ValueTy);
+      if (!isa<PointerType>(ValueTy)) {
+        llvm_unreachable("valuety not pointer");
+      }
+      ValueTy = cast<PointerType>(ValueTy)->getElementType();
+      DLOG("base valuety: " << *ValueTy);
     }
     DLOG("prefix: " << ptrName << " arrayidx: " << ArrayIdx);
-    if (!T) return ptrName + "->{unknownField}";
+    if (!T) {
+      DLOG("T null for " << *V);
+      return ptrName + ArrayIdx.str() +
+             getFragmentNameNoDbg(V->getType(), StructIndices.begin(),
+                                  StructIndices.end());
+    }
     /*if (!(T = calibrateDebugType(V->getType(), T))) {
 
       LLVM_DEBUG(errs() << "mismatched types2 for " << *V << "\n");
@@ -1023,12 +1046,13 @@ namespace llvm {
     } else {
       DLOG("basetype: " << *T);
     }
-    Type *ValueTy = V->getType();
+    DLOG("valuety: " << *ValueTy);
     if (auto PT = dyn_cast<DIDerivedType>(T); PT && PT->getBaseType()) {
       DLOG("GEP: " << *V);
       DLOG("PT: " << *PT);
       std::string Sep = ".";
       if (ArrayIdx.empty() && PT->getTag() == dwarf::DW_TAG_pointer_type) Sep = "->"; // if explicit array indexing, dereference is already done
+      DLOG("valuety: " << *ValueTy);
       ValueTy = cast<PointerType>(ValueTy)->getElementType();
       return ptrName + ArrayIdx.str() +
              getFragmentTypeName(trimNonPointerDerivedTypes(PT->getBaseType()),
@@ -1117,11 +1141,11 @@ namespace llvm {
     LLVM_DEBUG(errs() << "GEP!\n");
     LLVM_DEBUG(GEP->dump());
     auto OP = GEP->getPointerOperand();
-    auto ValueTy =
-        cast<PointerType>(GEP->getPointerOperandType())->getElementType();
-    getFragmentNameNoDbg(OP->getType(), GEP->idx_begin(), GEP->idx_end());
+    //getFragmentNameNoDbg(OP->getType(), GEP->idx_begin(), GEP->idx_end());
     DLOG("operand: " << *OP);
+    auto ValueTy = cast<PointerType>(GEP->getPointerOperandType())->getElementType();
     std::string ArrayIdx = "";
+    assert(GEP->idx_begin() != nullptr);
     auto FirstOffset = GEP->idx_begin()->get();
     assert(FirstOffset != nullptr);
     LLVM_DEBUG(errs() << "first offset: " << *FirstOffset << "\n");
@@ -1286,11 +1310,18 @@ namespace llvm {
     SmallSet<const Value *, 10> Visited;
     // want BFS under the assumption that the names of values fewer hops away are more likely to represent this variable well
     std::deque<std::pair<const Value *, int32_t>> Queue;
+    DLOG("U: " << U);
+    if (auto PHI = dyn_cast<PHINode>(U)) {
+      DLOG("phi: " << *PHI);
+    }
     for (uint32_t i = 0; i < U->getNumOperands(); i++) {
+      DLOG("U[" << i << "]" << U->getOperand(i));
+      DLOG("*U[" << i << "]" << *U->getOperand(i));
       Queue.push_back(std::make_pair(U->getOperand(i), (int32_t)i));
     }
     while(!Queue.empty()) {
       const auto [V, pred] = Queue.front();
+      DLOG("V: " << *V);
       Queue.pop_front();
       Visited.insert(V);
       auto Name = tryGetNameFromDbgValue(V, FinalType);
@@ -1429,31 +1460,44 @@ namespace llvm {
 
   std::string DiagnosticNameGenerator::getOriginalPhiName(const PHINode *PHI, DIType **FinalType) {
     // assume induction variable structure, and name after first DVI found
+    DLOG("PHI: " << PHI);
+    DLOG("*PHI: " << *PHI);
+    if (CurrentPhis.count(PHI)) {
+      DLOG("recursive phi call detected");
+      return "{recursively-defined-structure}";
+    }
+    CurrentPhis.insert(PHI);
     auto [name, pred] = getOriginalInductionVariableName(PHI, FinalType);
     LLVM_DEBUG(errs() << "indvar name: " << name << "\n");
     if (pred < 0) {
       // Found no dbg variable intrinsic. Since we've explored recursively all
       // the way, we already know that the operands will not be of much use in
       // determining original name.
-      return "<unknown-phi %" + PHI->getName().str() + ">";
+      name = "<unknown-phi %" + PHI->getName().str() + ">";
+      goto cleanup;
     }
 
     if (!FinalType || !*FinalType) {
-      return name;
+      goto cleanup;
     }
-    auto Res = calibrateDebugType(PHI->getType(), *FinalType);
-    if (!Res.first) {
-      // The phi might not be an induction variable since the type doesn't match.
-      // We know which operand had the shortest distance to a name, so use that
-      // to name normally. This has the advantage of adjusting the FinalType at
-      // intermediate instructions that change the type, so we have higher chance
-      // of a type match. We also know we will find a name, and not loop around
-      // forever.
-      *FinalType = nullptr;
-      return getOriginalNameImpl(PHI->getOperand(pred), FinalType);
-    }
+    {
+      auto Res = calibrateDebugType(PHI->getType(), *FinalType);
+      if (!Res.first) {
+        // The phi might not be an induction variable since the type doesn't
+        // match. We know which operand had the shortest distance to a name, so
+        // use that to name normally. This has the advantage of adjusting the
+        // FinalType at intermediate instructions that change the type, so we
+        // have higher chance of a type match. We also know we will find a name,
+        // and not loop around forever.
+        *FinalType = nullptr;
+        name = getOriginalNameImpl(PHI->getOperand(pred), FinalType);
+        goto cleanup;
+      }
 
-    *FinalType = Res.second;
+      *FinalType = Res.second;
+    }
+  cleanup:
+    CurrentPhis.erase(PHI);
     return name;
   }
 
@@ -1516,12 +1560,43 @@ namespace llvm {
       + " " + Name + " " +
       getOriginalNameImpl(BO->getOperand(1), nullptr);
   }
+  std::string
+  DiagnosticNameGenerator::getOriginalCastName(const CastInst *Cast,
+                                               DIType **const FinalType) {
+    if (auto BCast = dyn_cast<BitCastInst>(Cast)) {
+      return getOriginalBitCastName(BCast, FinalType);
+    }
+    if (auto PCast = dyn_cast<IntToPtrInst>(Cast)) {
+      auto Name = getOriginalNameImpl(PCast->getOperand(0), nullptr);
+      if (FinalType) {
+        // This search is unnecessary if we do not want the type to begin with
+        DebugInfoFinder DIF;
+        DIF.processModule(*M);
+        for (auto DITy : DIF.types()) {
+          if (compareValueTypeAndDebugType(PCast->getType(), DITy) == Match) {
+            DLOG("found ditype for " << *PCast);
+            DLOG("ditype: " << *DITy);
+            *FinalType = DITy;
+            break;
+          }
+        }
+      }
+      return Name;
+    }
+    auto OP = Cast->getOperand(0);
+    // Most of the remaining cast instructions are numerical types, where Finaltype
+    // does not matter much anyways.
+    return getOriginalNameImpl(OP, nullptr);
+  }
 
-  std::string DiagnosticNameGenerator::getOriginalBitCastName(const BitCastInst *BC, DIType **const FinalType) {
+  std::string
+  DiagnosticNameGenerator::getOriginalBitCastName(const BitCastInst *BC,
+                                                  DIType **const FinalType) {
     DLOG("naming bitcast: " << *BC);
     const Value *OP = BC->getOperand(0);
     std::string name = getOriginalNameImpl(OP, FinalType);
-    if (!(FinalType && *FinalType)) return name;
+    if (!(FinalType && *FinalType))
+      return name;
     if (compareValueTypeAndDebugType(BC->getType(), *FinalType) == Match) {
       DLOG("BC didn't need calibration: " << *BC << " DIType: " << *FinalType);
       return name;
@@ -1533,12 +1608,13 @@ namespace llvm {
       DLOG("widening cast");
       if (!M) {
         llvm_unreachable("no module!");
-        *FinalType = nullptr; // it's better to return no type than an incorrect type
+        *FinalType =
+            nullptr; // it's better to return no type than an incorrect type
         return name;
       }
-      // We want to find a DIType that contains (potentially transitively) the DIType of OP,
-      // and also matches the value type of BC
-      SmallVector<DIType*, 8> Users;
+      // We want to find a DIType that contains (potentially transitively) the
+      // DIType of OP, and also matches the value type of BC
+      SmallVector<DIType *, 8> Users;
       SmallPtrSet<DIType *, 32> VisitedUsers;
       DIType *T = *FinalType;
       // If pointer, we want to get the subtype relationship of the base type
@@ -1562,16 +1638,19 @@ namespace llvm {
           if (auto res = calibrateDebugType(BC->getType(), User); res.first) {
             *FinalType = res.second;
             DLOG("found matching type! ");
-            //printDbgType(*FinalType);
-            if (res.first == Match) return name;
-            // if matching includes incomplete types, keep looking for exact match
+            // printDbgType(*FinalType);
+            if (res.first == Match)
+              return name;
+            // if matching includes incomplete types, keep looking for exact
+            // match
           }
           VisitedUsers.insert(User);
           PrevUsers.push_back(User);
         }
         DLOG("round finished");
         Users.clear();
-        for (auto User : PrevUsers) { // types of BC and OP can differ several nesting levels
+        for (auto User : PrevUsers) { // types of BC and OP can differ several
+                                      // nesting levels
           findAllDITypeUses(User, Users, *M);
         }
       }
@@ -1582,7 +1661,8 @@ namespace llvm {
       DLOG("OP type:");
       LLVM_DEBUG(printValueType(OP->getType()));
       DLOG("BB: " << *BC->getParent());
-      if (auto I = dyn_cast<Instruction>(OP); I && I->getParent() != BC->getParent()) {
+      if (auto I = dyn_cast<Instruction>(OP);
+          I && I->getParent() != BC->getParent()) {
         DLOG("OP-BB: " << *I->getParent());
       }
       if (auto GEP = dyn_cast<GetElementPtrInst>(OP)) {
@@ -1600,7 +1680,7 @@ namespace llvm {
         }
       }
 
-      //llvm_unreachable("no relationship between before and after cast");
+      // llvm_unreachable("no relationship between before and after cast");
       // We could not find a simple subtype relationship before and after cast
       // The programmer knows something we don't
       *FinalType = nullptr;
@@ -1608,42 +1688,26 @@ namespace llvm {
     return name;
   }
 
-  std::string DiagnosticNameGenerator::getOriginalInstructionName(const Instruction *const I,
-                                         DIType **const FinalType) {
+  std::string DiagnosticNameGenerator::getOriginalInstructionName(
+      const Instruction *const I, DIType **const FinalType) {
+    DLOG("inst: " << *I);
     if (auto GEP = dyn_cast<GetElementPtrInst>(I)) {
       auto Name = getOriginalPointerName(GEP, FinalType);
       DLOG("left gep");
       return Name;
     }
-    if (auto BCast = dyn_cast<BitCastInst>(I)) {
-      return getOriginalBitCastName(BCast, FinalType);
+    if (auto Cast = dyn_cast<CastInst>(I)) {
+      return getOriginalCastName(Cast, FinalType);
     }
-    if (auto PCast = dyn_cast<IntToPtrInst>(I)) {
-      auto Name = getOriginalNameImpl(PCast->getOperand(0), nullptr);
-      if (FinalType) {
-        // This search is unnecessary if we do not want the type to begin with
-        DebugInfoFinder DIF;
-        DIF.processModule(*M);
-        for (auto DITy : DIF.types()) {
-          if (compareValueTypeAndDebugType(PCast->getType(), DITy) == Match) {
-            DLOG("found ditype for " << *PCast);
-            DLOG("ditype: " << *DITy);
-            *FinalType = DITy;
-            break;
-          }
-        }
-      }
-      return Name;
-    }
-    if (auto UI = dyn_cast<UnaryInstruction>(I)) {
-      DLOG("unary: " << UI);
+    if (auto Load = dyn_cast<LoadInst>(I)) {
       // Most unary instructions don't  really alter the value that much
       // so our default here is to just use the name of the operand.
       // Small exception is bitcast which is handled above because it can destroy DITypes.
       // TODO: turns out the above applies mostly to the numerical type casts. Break this out into a CastInst method.
-      const Value *OP = UI->getOperand(0);
-      std::string name = getOriginalNameImpl(OP, FinalType); // TODO Figure out if this could ever cause an infinite loop in welformed programs. My guess is no.
-      if (isa<LoadInst>(UI) && !isa<GlobalVariable>(OP)) { // TODO: maybe advance FT even for GV?
+      const Value *OP = Load->getOperand(0);
+      DLOG("OP: " << *OP);
+      std::string name = getOriginalNameImpl(OP, FinalType);
+      if (!isa<GlobalVariable>(OP)) { // TODO: maybe advance FT even for GV?
         // In C syntax globals don't act like pointers, but they are in IR.
         // otherwise add dereference to name and type for loads.
         if (FinalType && *FinalType) {
@@ -1677,6 +1741,25 @@ namespace llvm {
     if (auto Br = dyn_cast<BranchInst>(I)) {
       return getOriginalBranchName(Br, FinalType);
     };
+    if (auto Alloc = dyn_cast<AllocaInst>(I)) {
+      std::string TypeName;
+      raw_string_ostream SS(TypeName);
+      SS << Alloc->getType();
+      if (FinalType) {
+        // This search is unnecessary if we do not want the type to begin with
+        DebugInfoFinder DIF;
+        DIF.processModule(*M);
+        for (auto DITy : DIF.types()) {
+          if (compareValueTypeAndDebugType(Alloc->getType(), DITy) == Match) {
+            DLOG("found ditype for " << *Alloc);
+            DLOG("ditype: " << *DITy);
+            *FinalType = DITy;
+            break;
+          }
+        }
+      }
+      return "alloca<" + TypeName + ">";
+    }
     errs() << "unhandled instruction type: " << *I << "\n";
     return "";
   }
