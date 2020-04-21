@@ -15,8 +15,10 @@
 #ifndef LLVM_IR_DIAGNOSTICNAME_H
 #define LLVM_IR_DIAGNOSTICNAME_H
 
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Module.h"
@@ -41,6 +43,8 @@ private:
   DIBuilder *Builder;
   DIDerivedType *createPointerType(DIType *BaseTy);
   TypeCompareResult compareValueTypeAndDebugType(const Type *Ty, const DIType *DITy);
+  /// Used to prevent infinite recursion.
+  SmallSet<const PHINode*, 4> CurrentPhis;
   std::string getFragmentTypeName(DIType *T, int64_t Offset,
                                   DIType **FinalType,
                                   std::string Sep = ".");
@@ -92,6 +96,8 @@ private:
   std::string getOriginalNameImpl(const Value *V,
                                   DIType **const FinalType);
   std::string getOriginalBitCastName(const BitCastInst *BC, DIType **const FinalType);
+  std::string getOriginalCastName(const CastInst *Cast,
+                                  DIType **const FinalType);
 };
 } // namespace llvm
 #endif // LLVM_IR_DIAGNOSTICNAME_H
