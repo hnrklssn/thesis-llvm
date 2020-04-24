@@ -166,26 +166,28 @@ static void findAllDITypeUses(const DIType *T, SmallVectorImpl<DIType *> &Users,
   }
 }
 
-static bool isFirstFieldNestedValueTypeOrEqual(const Type *Outer, const Type *Inner) {
+  static bool isFirstFieldNestedValueTypeOrEqual(const Type *Outer, const Type *Inner, unsigned &NestingDepth) {
   DLOG("isNestedOrEqual? " << *Outer << " vs " << *Inner);
+  NestingDepth++;
   if (Outer == Inner) return true;
   if (auto StructTy = dyn_cast<StructType>(Outer)) {
-    return isFirstFieldNestedValueTypeOrEqual(StructTy->getElementType(0), Inner);
+    return isFirstFieldNestedValueTypeOrEqual(StructTy->getElementType(0), Inner, NestingDepth);
   }
   if (auto SeqTy = dyn_cast<SequentialType>(Outer)) {
     return isFirstFieldNestedValueTypeOrEqual(SeqTy->getElementType(),
-                                              Inner);
+                                              Inner, NestingDepth);
   }
   return false;
 }
 
-static bool isFirstFieldNestedValueType(const Type *Outer, const Type *Inner) {
+  static bool isFirstFieldNestedValueType(const Type *Outer, const Type *Inner, unsigned &NestingDepth) {
   DLOG("isNested? " << *Outer << " vs " << *Inner);
   while(Outer->isPointerTy() && Inner->isPointerTy()) {
     Outer = cast<PointerType>(Outer)->getElementType();
     Inner = cast<PointerType>(Inner)->getElementType();
   }
-  return Outer != Inner && isFirstFieldNestedValueTypeOrEqual(Outer, Inner);
+  NestingDepth = 0;
+  return Outer != Inner && isFirstFieldNestedValueTypeOrEqual(Outer, Inner, NestingDepth);
 }
 } // namespace llvm
 
@@ -201,7 +203,36 @@ llvm::DiagnosticNameGenerator llvm::DiagnosticNameGenerator::create(Module *M) {
   return DiagnosticNameGenerator(M, nullptr);
 }
 llvm::DiagnosticNameGenerator::DiagnosticNameGenerator(Module *M, DIBuilder *B)
-  : M(M), Builder(B) {}
+    : M(M), Builder(B) {
+  if (!M)
+    return;
+  DIF.processModule(*M);
+  for (auto User : DIF.types()) {
+    if (auto Comp = dyn_cast<DICompositeType>(User)) {
+      for (auto Elem : Comp->getElements()) {
+        if (!isa_and_nonnull<DIType>(Elem))
+          continue;
+        // Skipping derived fluff types not only saves memory and shortens the
+        // chain to traverse, but it also makes the length of the use chain
+        // predictable. This lets us cap the number of uses to traverse.
+        auto RealElem = trimNonPointerDerivedTypes(cast<DIType>(Elem));
+        if (!DITypeUsers.count(RealElem)) {
+          DITypeUsers.insert(
+              std::make_pair(RealElem, new SmallVector<DIType *, 4>));
+        }
+        DITypeUsers.find(RealElem)->getSecond()->push_back(cast<DIType>(User));
+      }
+    } else if (auto Derived = dyn_cast<DIDerivedType>(User)) {
+      auto Base = trimNonPointerDerivedTypes(Derived->getBaseType());
+      if (!Base) continue;
+      if (!DITypeUsers.count(Base)) {
+        DITypeUsers.insert(
+            std::make_pair(Base, new SmallVector<DIType *, 4>));
+      }
+      DITypeUsers.find(Base)->getSecond()->push_back(cast<DIType>(User));
+    }
+  }
+}
 
 llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *BaseTy) {
     if (!Builder) return nullptr;
@@ -1613,10 +1644,11 @@ namespace llvm {
       DLOG("BC didn't need calibration: " << *BC << " DIType: " << *FinalType);
       return name;
     }
-    if (isFirstFieldNestedValueType(OP->getType(), BC->getType())) {
+    unsigned NestingDepth;
+    if (isFirstFieldNestedValueType(OP->getType(), BC->getType(), NestingDepth)) {
       DLOG("narrowing cast");
       *FinalType = calibrateDebugType(BC->getType(), *FinalType).second;
-    } else if (isFirstFieldNestedValueType(BC->getType(), OP->getType())) {
+    } else if (isFirstFieldNestedValueType(BC->getType(), OP->getType(), NestingDepth)) {
       DLOG("widening cast");
       if (!M) {
         llvm_unreachable("no module!");
@@ -1636,11 +1668,17 @@ namespace llvm {
         *FinalType = nullptr;
         return name;
       }
-      findAllDITypeUses(T, Users, *M);
+      auto it = DITypeUsers.find(T);
+      if (it != DITypeUsers.end()) {
+        for (auto User : *it->getSecond()) {
+          Users.push_back(User);
+        }
+      }
       // TODO: cap number of iterations to nesting distance if more performance
       // is needed
       *FinalType = nullptr;
-      while (!Users.empty()) {
+      unsigned Depth = 0;
+      while (!Users.empty() && Depth++ <= NestingDepth) {
         DLOG("iterating users...");
         SmallVector<DIType *, 8> PrevUsers;
         for (auto User : Users) {
@@ -1663,7 +1701,18 @@ namespace llvm {
         Users.clear();
         for (auto User : PrevUsers) { // types of BC and OP can differ several
                                       // nesting levels
-          findAllDITypeUses(User, Users, *M);
+          auto it = DITypeUsers.find(User);
+          if (it != DITypeUsers.end()) {
+            for (auto NextUser : *it->getSecond()) {
+              if (NextUser->getTag() == dwarf::DW_TAG_structure_type) {
+                auto Comp = cast<DICompositeType>(NextUser);
+                auto FirstElem = Comp->getElements()[0];
+                // Subtype relationship will be relevant only if first struct field
+                if (trimNonPointerDerivedTypes(cast<DIType>(FirstElem)) != User) continue;
+              }
+              Users.push_back(NextUser);
+            }
+          }
         }
       }
       DLOG("did not find matching type!");
@@ -1759,8 +1808,7 @@ namespace llvm {
       SS << Alloc->getType();
       if (FinalType) {
         // This search is unnecessary if we do not want the type to begin with
-        DebugInfoFinder DIF;
-        DIF.processModule(*M);
+        // TODO: evaluate whether this full search is worth the time
         for (auto DITy : DIF.types()) {
           if (compareValueTypeAndDebugType(Alloc->getType(), DITy) == Match) {
             DLOG("found ditype for " << *Alloc);

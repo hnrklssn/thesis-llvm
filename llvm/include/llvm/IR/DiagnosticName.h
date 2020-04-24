@@ -15,6 +15,7 @@
 #ifndef LLVM_IR_DIAGNOSTICNAME_H
 #define LLVM_IR_DIAGNOSTICNAME_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -41,10 +42,13 @@ public:
 private:
   Module *M;
   DIBuilder *Builder;
+  DebugInfoFinder DIF;
+  /// Used to prevent infinite recursion.
+  SmallSet<const PHINode *, 4> CurrentPhis;
+  /// Fast lookup of DITypes referencing a given DIType
+  DenseMap<DIType*, SmallVector<DIType*, 4>*> DITypeUsers;
   DIDerivedType *createPointerType(DIType *BaseTy);
   TypeCompareResult compareValueTypeAndDebugType(const Type *Ty, const DIType *DITy);
-  /// Used to prevent infinite recursion.
-  SmallSet<const PHINode*, 4> CurrentPhis;
   std::string getFragmentTypeName(DIType *T, int64_t Offset,
                                   DIType **FinalType,
                                   std::string Sep = ".");
