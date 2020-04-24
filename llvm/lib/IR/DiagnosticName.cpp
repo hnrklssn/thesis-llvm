@@ -15,6 +15,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -55,6 +56,20 @@
 
 #define DEBUG_TYPE "diagnostic-name"
 #define DLOG(args) LLVM_DEBUG(errs() << "[" /*<< __FILE__ << ":"*/ << __LINE__ << "] "<< args << "\n")
+STATISTIC(NumGON, "Number of calls to getOriginalName");
+STATISTIC(NumGONImpl, "Number of calls to getOriginalNameImpl - higher ratio to getOriginalName means more recursion");
+STATISTIC(NumNoDbgFrag, "Number of calls to getFragmentNameNoDbg");
+STATISTIC(NumNoDbgFound, "Number of failed attempts to find debug info for getOriginalNameImpl");
+STATISTIC(NumDbgRequested,
+          "Number of calls to getOriginalNameImpl with FinalType non-null");
+STATISTIC(NumBB, "Number calls to getOriginalNameImpl for basic blocks");
+STATISTIC(NumBitcastFails, "Number of analyzed bitcast instructions for which DIType could not be found");
+STATISTIC(NumBitcastWidenSuccesses,
+          "Number of successfully analyzed widening bitcast instructions for "
+          "which DIType could be found");
+STATISTIC(NumBitcastNarrowingSuccesses,
+          "Number of successfully analyzed narrowing bitcast instructions for "
+          "which DIType could be found");
 
 namespace llvm {
 
@@ -129,38 +144,6 @@ static void printDbgType(const DIType *T, unsigned int indent = 0) {
         errs() << *Elem << "\n";
       } else {
         printDbgType(cast<DIType>(Elem), indent + 1);
-      }
-    }
-  }
-}
-  // TODO: Cache def-use chains if needed performance-wise.
-static void findAllDITypeUses(const DIType *T, SmallVectorImpl<DIType *> &Users,
-                              const Module &M) {
-  DebugInfoFinder DIF;
-  DLOG("looking for uses of " << *T);
-  DIF.processModule(M);
-  for (auto User : DIF.types()) {
-    //DLOG("USER: " << *User);
-    if (auto Comp = dyn_cast<DICompositeType>(User)) {
-      for (auto Elem : Comp->getElements()) {
-        if (!Elem)
-          continue;
-        //DLOG("ELEM: " << *Elem);
-        if (Elem == T) {
-          DLOG("found use!");
-          Users.push_back(cast<DIType>(User));
-          break;
-        }
-      }
-    } else if (auto Derived = dyn_cast<DIDerivedType>(User)) {
-      if (Derived->getBaseType()) {
-        //DLOG("BASE: " << *Derived->getBaseType());
-      } else {
-        //DLOG("BASE: nullptr");
-      }
-      if (Derived->getBaseType() == T) {
-        DLOG("found use!");
-        Users.push_back(Derived);
       }
     }
   }
@@ -1146,6 +1129,7 @@ namespace llvm {
   std::string DiagnosticNameGenerator::getFragmentNameNoDbg(
       const Type *Ty, const int64_t *idx_begin, const int64_t *idx_end) {
     std::string name = "";
+    ++NumNoDbgFrag;
     for (auto itr = idx_begin; itr < idx_end; itr++) {
       auto Idx = *itr;
       auto IdxName = std::to_string(Idx);
@@ -1157,6 +1141,7 @@ namespace llvm {
   std::string DiagnosticNameGenerator::getFragmentNameNoDbg(
       const Type *Ty, const Use *idx_begin, const Use *idx_end) {
     std::string name = "";
+    ++NumNoDbgFrag;
     for (auto itr = idx_begin; itr < idx_end; itr++) {
       auto Idx = itr->get();
       auto IdxName = getOriginalNameImpl(Idx, nullptr);
@@ -1648,6 +1633,7 @@ namespace llvm {
     if (isFirstFieldNestedValueType(OP->getType(), BC->getType(), NestingDepth)) {
       DLOG("narrowing cast");
       *FinalType = calibrateDebugType(BC->getType(), *FinalType).second;
+      if (*FinalType) ++NumBitcastNarrowingSuccesses;
     } else if (isFirstFieldNestedValueType(BC->getType(), OP->getType(), NestingDepth)) {
       DLOG("widening cast");
       if (!M) {
@@ -1689,8 +1675,10 @@ namespace llvm {
             *FinalType = res.second;
             DLOG("found matching type! ");
             // printDbgType(*FinalType);
-            if (res.first == Match)
+            if (res.first == Match) {
+              ++NumBitcastWidenSuccesses;
               return name;
+            }
             // if matching includes incomplete types, keep looking for exact
             // match
           }
@@ -1746,6 +1734,7 @@ namespace llvm {
       // The programmer knows something we don't
       *FinalType = nullptr;
     }
+    ++NumBitcastFails;
     return name;
   }
 
@@ -1761,10 +1750,6 @@ namespace llvm {
       return getOriginalCastName(Cast, FinalType);
     }
     if (auto Load = dyn_cast<LoadInst>(I)) {
-      // Most unary instructions don't  really alter the value that much
-      // so our default here is to just use the name of the operand.
-      // Small exception is bitcast which is handled above because it can destroy DITypes.
-      // TODO: turns out the above applies mostly to the numerical type casts. Break this out into a CastInst method.
       const Value *OP = Load->getOperand(0);
       DLOG("OP: " << *OP);
       std::string name = getOriginalNameImpl(OP, FinalType);
@@ -1917,20 +1902,21 @@ namespace llvm {
   /// set to point to the DIType of the value, if it can be found.
   std::string DiagnosticNameGenerator::getOriginalNameImpl(const Value *V,
                                   DIType **const FinalType) {
+    ++NumGONImpl;
     assert(V != nullptr);
     LLVM_DEBUG(errs() << "gON: " << *V << "\n");
 
     std::string Name = tryGetNameFromDbgValue(V, FinalType);
     if (!Name.empty()) { // This is the gold standard, it will tell us the actual source name
-      return Name;
+      goto ret;
     }
-    //LLVM_DEBUG(errs() << "gON: no DVI" << *V << "\n");
 
     if (auto I = dyn_cast<Instruction>(V)) {
       Name = getOriginalInstructionName(I, FinalType);
     } else if (auto C = dyn_cast<Constant>(V))
       Name = getOriginalConstantName(C, FinalType);
     else if (auto BB = dyn_cast<BasicBlock>(V)) {
+      ++NumBB;
       Name = "BB{\n";
       Name += BB->getName();
       Name += ":\n";
@@ -1944,7 +1930,8 @@ namespace llvm {
       Name = Arg->getName();
     } else {
       errs() << "unhandled value type: " << *V << "\n";
-      return "";
+      Name = ""; // TODO: fallback
+      goto ret;
     }
     if (FinalType && *FinalType) {
       DLOG("calibrating type");
@@ -1965,6 +1952,11 @@ namespace llvm {
         *FinalType = T;
       }
     }
+  ret:
+    if (FinalType) {
+      ++NumDbgRequested;
+      if (!*FinalType) ++NumNoDbgFound;
+    }
     return Name;
   }
 } // namespace llvm
@@ -1973,6 +1965,7 @@ namespace llvm {
 /// TODO: Handle returning multiple aliasing names
 std::string llvm::DiagnosticNameGenerator::getOriginalName(const Value* V) {
   errs().SetBufferSize(100000);
+  ++NumGON;
   return getOriginalNameImpl(V, nullptr);
 }
 
