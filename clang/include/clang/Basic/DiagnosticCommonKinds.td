@@ -117,6 +117,11 @@ def note_decl_hiding_tag_type : Note<
 def err_attribute_not_type_attr : Error<
   "%0 attribute cannot be applied to types">;
 def err_enum_template : Error<"enumeration cannot be a template">;
+def warn_pragma_remark_loop_on_non_loop : Warning<"pragma %0 only applicable to loops">;
+def note_loop_attribute_non_loop_stmt : Note<
+  "pragma applied to non-loop statement here %0">;
+def err_pragma_remark_invalid_option : Error<
+  "%select{invalid|missing}0 option %select{'%2'|}0, expected %select{conf, file or funct|loop|conf, file, funct or loop}1">, DefaultFatal;
 
 def warn_cxx20_compat_consteval : Warning<
   "'consteval' specifier is incompatible with C++ standards before C++20">,
