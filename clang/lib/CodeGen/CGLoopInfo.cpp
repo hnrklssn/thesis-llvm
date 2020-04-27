@@ -7,8 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "CGLoopInfo.h"
+#include "RemarkMetadata.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/Attrs.inc"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
@@ -425,6 +427,10 @@ MDNode *LoopInfo::createMetadata(
 
   LoopProperties.insert(LoopProperties.end(), AdditionalLoopProperties.begin(),
                         AdditionalLoopProperties.end());
+  LLVMContext &Ctx = Header->getContext();
+  for (const auto RA : Attrs.remarks_enabled) {
+    LoopProperties.push_back(createRemarkMetadata(Ctx, *RA));
+  }
   return createFullUnrollMetadata(Attrs, LoopProperties, HasUserTransforms);
 }
 
@@ -450,6 +456,7 @@ void LoopAttributes::clear() {
   DistributeEnable = LoopAttributes::Unspecified;
   PipelineDisabled = false;
   PipelineInitiationInterval = 0;
+  remarks_enabled.clear();
 }
 
 LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
@@ -580,6 +587,12 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
     const LoopHintAttr *LH = dyn_cast<LoopHintAttr>(Attr);
     const OpenCLUnrollHintAttr *OpenCLHint =
         dyn_cast<OpenCLUnrollHintAttr>(Attr);
+
+    if (const RemarkAttr *RA = dyn_cast<RemarkAttr>(Attr)) {
+      addRemarkAttr(RA);
+      continue;
+    }
+
 
     // Skip non loop hint attributes
     if (!LH && !OpenCLHint) {

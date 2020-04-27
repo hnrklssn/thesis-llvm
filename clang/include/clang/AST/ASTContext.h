@@ -16,6 +16,7 @@
 
 #include "clang/AST/ASTContextAllocate.h"
 #include "clang/AST/ASTTypeTraits.h"
+#include "clang/AST/AttrIterator.h"
 #include "clang/AST/CanonicalType.h"
 #include "clang/AST/CommentCommandTraits.h"
 #include "clang/AST/ComparisonCategories.h"
@@ -234,6 +235,7 @@ private:
   mutable llvm::ContextualFoldingSet<SubstTemplateTemplateParmPackStorage,
                                      ASTContext&>
     SubstTemplateTemplateParmPacks;
+  mutable AttrVec ModuleRemarks;
 
   /// The set of nested name specifiers.
   ///
@@ -427,6 +429,9 @@ private:
   ASTContext &this_() { return *this; }
 
 public:
+  void addModuleRemarkAttr(RemarkAttr *RemarkAttr);
+  const AttrVec &getModuleRemarkAttrs() const { return ModuleRemarks; };
+
   /// A type synonym for the TemplateOrInstantiation mapping.
   using TemplateOrSpecializationInfo =
       llvm::PointerUnion<VarTemplateDecl *, MemberSpecializationInfo *>;

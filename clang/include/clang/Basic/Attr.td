@@ -3432,3 +3432,29 @@ def NoBuiltin : Attr {
   let Subjects = SubjectList<[Function]>;
   let Documentation = [NoBuiltinDocs];
 }
+
+def Remark : Attr {
+  let Spellings = [Pragma<"", "remark">,
+                   Pragma<"", "remark_missed">,
+                   Pragma<"", "remark_analysis">];
+  /// Conf is only valid with 1-2 values: one defining output format, and optionally one defining output file location
+  let Args = [EnumArgument<"Option", "OptionType",
+                          ["file", "funct", "loop", "conf"],
+                          ["File", "Funct", "Loop", "Conf"]>,
+              VariadicStringArgument<"Values">];
+  let AdditionalMembers = [{
+  static const char *getOptionName(int Option) {
+    switch(Option) {
+    case File: return "file";
+    case Funct: return "funct";
+    case Loop: return "loop";
+    case Conf: return "conf";
+    }
+    llvm_unreachable("Unhandled Remark option.");
+  }
+    void printPrettyPragma(raw_ostream &OS, const PrintingPolicy &Policy) const {
+      return;
+    }
+  }];
+  let Documentation = [RemarkDocs];
+}

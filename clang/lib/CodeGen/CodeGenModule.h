@@ -1500,6 +1500,10 @@ private:
   /// Emits the initializer for a uuidof string.
   llvm::Constant *EmitUuidofInitializer(StringRef uuidstr);
 
+  /// Emits metadata to activate remarks from LLVM on module level.
+  /// Originates from #pragma clang remark
+  void EmitModuleRemarkMetadata();
+
   /// Determine whether the definition must be emitted; if this returns \c
   /// false, the definition can be emitted lazily if it's used.
   bool MustBeEmitted(const ValueDecl *D);

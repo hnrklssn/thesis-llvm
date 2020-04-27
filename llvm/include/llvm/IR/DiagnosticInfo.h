@@ -21,6 +21,7 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/DiagnosticName.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/YAMLTraits.h"
 #include <algorithm>
@@ -389,7 +390,7 @@ public:
 
   /// Return the absolute path tot the file.
   std::string getAbsolutePath() const;
-  
+
   const Function &getFunction() const { return Fn; }
   DiagnosticLocation getLocation() const { return Loc; }
 
@@ -661,6 +662,8 @@ public:
 
   const Value *getCodeRegion() const { return CodeRegion; }
 
+  void setLoopID(MDNode *MD) { LoopID = Optional<MDNode*>(MD); }
+
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() >= DK_FirstRemark && DI->getKind() <= DK_LastRemark;
   }
@@ -686,6 +689,11 @@ private:
   const Value *CodeRegion = nullptr;
 
   DiagnosticNameGenerator DNG;
+  Optional<MDNode*> LoopID;
+
+protected:
+  Optional<MDNode*> getLoopID() const { return LoopID; }
+  bool isOptRemarkEnabledByMetadata() const;
 };
 
 template <class RemarkT>

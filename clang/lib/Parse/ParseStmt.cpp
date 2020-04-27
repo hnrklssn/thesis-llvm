@@ -12,14 +12,19 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/PrettyDeclStackTrace.h"
+#include "clang/AST/Stmt.h"
 #include "clang/Basic/Attributes.h"
+#include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/PrettyStackTrace.h"
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Parse/LoopHint.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/Ownership.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/TypoCorrection.h"
+#include "clang/Sema/RemarkHint.h"
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -407,6 +412,10 @@ Retry:
   case tok::annot_pragma_attribute:
     HandlePragmaAttribute();
     return StmtEmpty();
+
+  case tok::annot_pragma_remark:
+    ProhibitAttributes(Attrs);
+    return ParsePragmaRemarkHint(Stmts, StmtCtx, TrailingElseLoc, Attrs);
   }
 
   // If we reached this code, the statement must end in a semicolon.
@@ -2069,6 +2078,44 @@ StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts,
   StmtResult S = ParseStatementOrDeclarationAfterAttributes(
       Stmts, StmtCtx, TrailingElseLoc, Attrs);
 
+  Attrs.takeAllFrom(TempAttrs);
+  return S;
+}
+
+StmtResult Parser::ParsePragmaRemarkHint(StmtVector &Stmts,
+                                         ParsedStmtContext StmtCtx,
+                                         SourceLocation *TrailingElseLoc,
+                                         ParsedAttributesWithRange &Attrs) {
+  assert(Tok.is(tok::annot_pragma_remark));
+  // Create temporary attribute list.
+  ParsedAttributesWithRange TempAttrs(AttrFactory);
+  RemarkHint Hint;
+  if (!HandlePragmaRemark(Hint))
+    return StmtError();
+  if (Hint.OptionLoc->Ident->getName() != "loop") {
+    Diag(Hint.OptionLoc->Loc, diag::err_pragma_remark_invalid_option)
+        /*invalid option*/ << 0
+        /*expected loop*/ << 1
+        /*actual option*/ << Hint.OptionLoc->Ident->getName();
+  }
+  SmallVector<ArgsUnion, 2> ArgHints;
+  ArgHints.push_back(Hint.OptionLoc);
+  ArgHints.append(Hint.ValueExprs.begin(), Hint.ValueExprs.end());
+  TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                   Hint.PragmaNameLoc->Loc, ArgHints.begin(), ArgHints.size(),
+                   ParsedAttr::AS_Pragma);
+  // Get the next statement.
+  MaybeParseCXX11Attributes(Attrs);
+  StmtResult S = ParseStatementOrDeclarationAfterAttributes(
+      Stmts, StmtCtx, TrailingElseLoc, Attrs);
+  auto Stmt = S.get();
+  if (!(isa<WhileStmt>(Stmt) || isa<ForStmt>(Stmt) || isa<DoStmt>(Stmt))) {
+    Diag(Hint.OptionLoc->Loc, diag::warn_pragma_remark_loop_on_non_loop)
+      << Hint.PragmaNameLoc->Ident->getName();
+    Diag(Stmt->getBeginLoc(), diag::note_loop_attribute_non_loop_stmt)
+      << Stmt->getSourceRange();
+    return S;
+  }
   Attrs.takeAllFrom(TempAttrs);
   return S;
 }

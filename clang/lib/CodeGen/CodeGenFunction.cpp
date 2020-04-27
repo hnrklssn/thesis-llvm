@@ -12,13 +12,14 @@
 
 #include "CodeGenFunction.h"
 #include "CGBlocks.h"
-#include "CGCleanup.h"
 #include "CGCUDARuntime.h"
 #include "CGCXXABI.h"
+#include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGOpenMPRuntime.h"
 #include "CodeGenModule.h"
 #include "CodeGenPGO.h"
+#include "RemarkMetadata.h"
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
@@ -1102,6 +1103,10 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   if (CurFuncDecl)
     if (const auto *VecWidth = CurFuncDecl->getAttr<MinVectorWidthAttr>())
       LargestVectorWidth = VecWidth->getVectorWidth();
+
+  if (CurFuncDecl && CurFuncDecl->hasAttr<RemarkAttr>())
+    for (auto Remark : CurFuncDecl->specific_attrs<RemarkAttr>())
+      AddRemarkMetadata(CurFn, Remark);
 }
 
 void CodeGenFunction::EmitFunctionBody(const Stmt *Body) {
@@ -2457,4 +2462,10 @@ llvm::DebugLoc CodeGenFunction::SourceLocToDebugLoc(SourceLocation Location) {
     return DI->SourceLocToDebugLoc(Location);
 
   return llvm::DebugLoc();
+}
+void CodeGenFunction::AddRemarkMetadata(llvm::Function *Fn,
+                                        const RemarkAttr *RemarkAttr) {
+  assert(RemarkAttr->getOption() == RemarkAttr::Funct);
+  llvm::MDNode *N = createRemarkMetadata(Fn->getContext(), *RemarkAttr);
+  Fn->setMetadata("llvm.remarks", N);
 }
