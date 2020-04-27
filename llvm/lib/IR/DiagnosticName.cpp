@@ -688,9 +688,9 @@ std::pair<TypeCompareResult, uint32_t> DiagnosticNameGenerator::isPointerChainTo
   }
 
 // TODO: dedup
-std::string llvm::DiagnosticNameGenerator::getFragmentTypeName(DIType *const T, int64_t Offset,
-                                  DIType **const FinalType,
-                                  std::string Sep/* = "."*/) {
+  std::string llvm::DiagnosticNameGenerator::getFragmentTypeName(
+      DIType *const T, int64_t Offset, DIType **const FinalType,
+      std::string Sep /* = "."*/) {
     assert(T && "fragment type null");
     if (!T) return "";
     DLOG("offset: " << Offset);
@@ -699,28 +699,45 @@ std::string llvm::DiagnosticNameGenerator::getFragmentTypeName(DIType *const T, 
     }
     if (auto Comp = dyn_cast<DICompositeType>(T)) {
       DIDerivedType *tmpT = nullptr;
-      for (auto E : Comp->getElements()) {
-        //LLVM_DEBUG(E->dump());
-        if(auto E2 = dyn_cast<DIDerivedType>(E)) {
-          int64_t O2 = E2->getOffsetInBits();
-          if (O2 > Offset) {
-            break;
+      auto elements = Comp->getElements();
+      switch (Comp->getTag()) {
+      case dwarf::DW_TAG_array_type: {
+        auto Base = Comp->getBaseType();
+        auto Size = Base->getSizeInBits();
+        auto Idx = Offset / Size;
+        return "[" + std::to_string(Idx) + "]" +
+               getFragmentTypeName(Base, Offset - Idx * Size, FinalType);
+      }
+      case dwarf::DW_TAG_union_type: {
+        DLOG("union: " << *T);
+        llvm_unreachable("union type in fragment bit offset");
+      }
+      default:
+        for (auto E : Comp->getElements()) {
+          // LLVM_DEBUG(E->dump());
+          if (auto E2 = dyn_cast<DIDerivedType>(E)) {
+            int64_t O2 = E2->getOffsetInBits();
+            if (O2 > Offset) {
+              break;
+            }
+            tmpT = E2;
+          } else {
+            DLOG("E: " << *E);
+            llvm_unreachable("non derived struct member");
           }
-          tmpT = E2;
-        } else {
-          DLOG("E: " << *E);
-          llvm_unreachable("non derived struct member");
         }
-      }
-      if (!tmpT) {
-        DLOG("T: " << *T);
-        for (auto E2 : Comp->getElements()) {
-          DLOG("E2: " << *E2);
+        if (!tmpT) {
+          DLOG("T: " << *T);
+          for (auto E2 : Comp->getElements()) {
+            DLOG("E2: " << *E2);
+          }
+          llvm_unreachable("no-elements-in-struct?");
         }
-        llvm_unreachable("no-elements-in-struct?");
+        return Sep + tmpT->getName().str() +
+               getFragmentTypeName(tmpT, Offset - tmpT->getOffsetInBits(),
+                                   FinalType);
       }
-      return Sep + tmpT->getName().str() + getFragmentTypeName(tmpT, Offset - tmpT->getOffsetInBits(), FinalType);
-    }
+      }
     if (auto Derived = dyn_cast<DIDerivedType>(T)) {
       if (FinalType) *FinalType = Derived;
       if (!Derived->getBaseType()) return "[" + std::to_string(Offset) + "]";
@@ -735,7 +752,7 @@ std::string llvm::DiagnosticNameGenerator::getFragmentTypeName(DIType *const T, 
   }
 
 namespace llvm {
-  /// Get rest of name based on the type of the base value, and the offset.
+
   std::string DiagnosticNameGenerator::getFragmentTypeName(DIType *T, const int64_t *Offsets_begin, const int64_t *Offsets_end, const Type *ValueTy, DIType **FinalType, std::string Sep/* = "."*/) {
     int64_t Offset = -1;
     if (ValueTy) {
@@ -790,7 +807,8 @@ namespace llvm {
         });
         return "[" + std::to_string(Offset) + "]" +
                getFragmentTypeName(Comp->getBaseType(), Offsets_begin + 1,
-                                   Offsets_end, ValueTy->getArrayElementType(), FinalType);
+                                   Offsets_end, ValueTy->getArrayElementType(),
+                                   FinalType);
       case dwarf::DW_TAG_union_type: {
         DLOG("union");
         DLOG("valuety: " << *ValueTy);
