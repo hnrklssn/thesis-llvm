@@ -49,13 +49,11 @@ private:
   DenseMap<DIType*, SmallVector<DIType*, 4>*> DITypeUsers;
   DIDerivedType *createPointerType(DIType *BaseTy);
   TypeCompareResult compareValueTypeAndDebugType(const Type *Ty, const DIType *DITy);
-  std::string getFragmentTypeName(DIType *T, int64_t Offset,
-                                  DIType **FinalType,
+  std::string getFragmentTypeName(DIType *T, int64_t Offset, DIType **FinalType,
                                   std::string Sep = ".");
   std::string getFragmentTypeName(DIType *T, const int64_t *Offsets_begin,
                                   const int64_t *Offsets_end,
-                                  const Type *ValueTy,
-                                  DIType **FinalType,
+                                  const Type *ValueTy, DIType **FinalType,
                                   std::string Sep = ".");
   std::pair<TypeCompareResult, uint32_t>
   isPointerChainToType(const PointerType *Ty, DIType *DITy);
