@@ -471,6 +471,7 @@ LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
     AccGroup = MDNode::getDistinct(Ctx, {});
   }
 
+
   if (!Attrs.IsParallel && Attrs.VectorizeWidth == 0 &&
       Attrs.InterleaveCount == 0 && Attrs.UnrollCount == 0 &&
       Attrs.UnrollAndJamCount == 0 && !Attrs.PipelineDisabled &&
@@ -479,7 +480,8 @@ LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
       Attrs.VectorizeEnable == LoopAttributes::Unspecified &&
       Attrs.UnrollEnable == LoopAttributes::Unspecified &&
       Attrs.UnrollAndJamEnable == LoopAttributes::Unspecified &&
-      Attrs.DistributeEnable == LoopAttributes::Unspecified && !StartLoc &&
+      Attrs.DistributeEnable == LoopAttributes::Unspecified &&
+      Attrs.remarks_enabled.empty() && !StartLoc &&
       !EndLoc)
     return;
 
