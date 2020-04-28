@@ -682,6 +682,7 @@ public:
 
   using DiagnosticInfoOptimizationBase::insert;
   void insert(DiagnosticValue DV);
+  bool isOptRemarkEnabledByMetadata() const;
 
 private:
   /// The IR value (currently basic block) that the optimization operates on.
@@ -693,7 +694,6 @@ private:
 
 protected:
   Optional<MDNode*> getLoopID() const { return LoopID; }
-  bool isOptRemarkEnabledByMetadata() const;
 };
 
 template <class RemarkT>

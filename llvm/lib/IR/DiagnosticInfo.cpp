@@ -423,7 +423,7 @@ bool DiagnosticInfoIROptimization::isOptRemarkEnabledByMetadata() const {
   // Loop level remark output
   Optional<MDNode *> LR = getLoopID();
   MDNode *LoopMD = nullptr;
-  if (LoopID.hasValue()) {
+  if (LR.hasValue()) {
     LoopMD = LR.getValue();
   } else if (CR) { // Make a best effort attempt to get loop data from BB even if loop recognition fails
     auto BB = cast<BasicBlock>(CR);

@@ -700,6 +700,11 @@ void BackendConsumer::OptimizationRemarkHandler(
     if (CodeGenOpts.OptimizationRemarkPattern &&
         CodeGenOpts.OptimizationRemarkPattern->match(D.getPassName()))
       EmitOptimizationMessage(D, diag::remark_fe_backend_optimization_remark);
+    else if (auto DIIO = dyn_cast<DiagnosticInfoIROptimization>(&D)) {
+      if (DIIO->isOptRemarkEnabledByMetadata()) {
+        EmitOptimizationMessage(D, diag::remark_fe_backend_optimization_remark);
+      }
+    }
   } else if (D.isMissed()) {
     // Missed optimization remarks are active only if the -Rpass-missed
     // flag has a regular expression that matches the name of the pass
@@ -708,6 +713,12 @@ void BackendConsumer::OptimizationRemarkHandler(
         CodeGenOpts.OptimizationRemarkMissedPattern->match(D.getPassName()))
       EmitOptimizationMessage(
           D, diag::remark_fe_backend_optimization_remark_missed);
+    else if (auto DIIO = dyn_cast<DiagnosticInfoIROptimization>(&D)) {
+      if (DIIO->isOptRemarkEnabledByMetadata()) {
+        EmitOptimizationMessage(
+            D, diag::remark_fe_backend_optimization_remark_missed);
+      }
+    }
   } else {
     assert(D.isAnalysis() && "Unknown remark type");
 
@@ -720,6 +731,12 @@ void BackendConsumer::OptimizationRemarkHandler(
          CodeGenOpts.OptimizationRemarkAnalysisPattern->match(D.getPassName())))
       EmitOptimizationMessage(
           D, diag::remark_fe_backend_optimization_remark_analysis);
+    else if (auto DIIO = dyn_cast<DiagnosticInfoIROptimization>(&D)) {
+      if (DIIO->isOptRemarkEnabledByMetadata()) {
+        EmitOptimizationMessage(
+            D, diag::remark_fe_backend_optimization_remark_analysis);
+      }
+    }
   }
 }
 
