@@ -30,9 +30,6 @@ using namespace llvm;
 OptimizationRemarkEmitter::OptimizationRemarkEmitter(const Function *F)
   : F(F), LI(nullptr), BFI(nullptr) {
 
-  if (!F->getContext().getDiagnosticsHotnessRequested())
-    return;
-
   // First create a dominator tree.
   DominatorTree DT;
   DT.recalculate(*const_cast<Function *>(F));
@@ -41,6 +38,10 @@ OptimizationRemarkEmitter::OptimizationRemarkEmitter(const Function *F)
   OwnedLI = std::make_unique<LoopInfo>(DT);
   LI = OwnedLI.get();
   LI->analyze(DT);
+
+  if (!F->getContext().getDiagnosticsHotnessRequested()) {
+    return;
+  }
 
   // Then compute BranchProbabilityInfo.
   BranchProbabilityInfo BPI;
@@ -95,9 +96,18 @@ void OptimizationRemarkEmitter::computeLoopID(
     OptDiag.setLoopID(computeLoopID(V));
 }
 
-static void addRemarkMetadata(SmallVectorImpl<MDNode*> &MDs, MDNode *N) {
-  for (auto &MDOp : N->operands()) {
-    if (auto MDN = dyn_cast<MDNode>(MDOp.get())) {
+static MDNode *getOperand(MDNode *N, unsigned i) {
+  return dyn_cast_or_null<MDNode>(N->getOperand(i).get());
+}
+
+static MDNode *getOperand(NamedMDNode *N, unsigned i) {
+  return N->getOperand(i);
+}
+
+template <class MDTy>
+static void addRemarkMetadata(SmallVectorImpl<MDNode*> &MDs, MDTy *N) {
+  for (auto i = 0; i < N->getNumOperands(); i++) {
+    if (MDNode *MDN = getOperand(N, i)) {
       if (MDN->getNumOperands() == 0) continue;
       if (auto MDS = dyn_cast<MDString>(MDN->getOperand(0).get())) {
         bool IsRemark = StringSwitch<bool>(MDS->getString())
@@ -123,9 +133,8 @@ void OptimizationRemarkEmitter::getAllRemarkMetadata(SmallVectorImpl<MDNode*> &M
   }
   const Module *M = F->getParent();
   NamedMDNode *Named = M->getNamedMetadata("llvm.remarks");
-  for (auto N : Named->operands()) {
-    addRemarkMetadata(MDs, N);
-  }
+  if (!Named) return;
+  addRemarkMetadata(MDs, Named);
 }
 
 bool OptimizationRemarkEmitter::isAnyRemarkEnabledByMetadata() const {

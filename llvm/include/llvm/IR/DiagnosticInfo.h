@@ -673,7 +673,6 @@ private:
 
 protected:
   Optional<MDNode*> getLoopID() const { return LoopID; }
-  bool isOptRemarkEnabledByMetadata() const;
 };
 
 /// Diagnostic information for applied optimization remarks.
