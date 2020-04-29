@@ -861,12 +861,19 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
   for (auto *U : LI->getPointerOperand()->users())
     if (U != LI && (isa<LoadInst>(U) || isa<StoreInst>(U)) &&
         DT->dominates(cast<Instruction>(U), LI)) {
-      // FIXME: for now give up if there are multiple memory accesses that
-      // dominate the load.  We need further analysis to decide which one is
-      // that we're forwarding from.
-      if (OtherAccess)
-        OtherAccess = nullptr;
-      else
+      // Use the most immediately dominating value
+      if (OtherAccess) {
+        if (DT->dominates(cast<Instruction>(OtherAccess),
+                          cast<Instruction>(U))) {
+          OtherAccess = U;
+        } else if (!DT->dominates(cast<Instruction>(U),
+                                  cast<Instruction>(OtherAccess))) {
+          // No strict domination relationship implies partial redundancy
+          // and we don't know which one
+          OtherAccess = nullptr;
+          break;
+        } // else: the current access is more immediate to LI, so keep it
+      } else
         OtherAccess = U;
     }
 
