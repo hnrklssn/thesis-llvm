@@ -1982,7 +1982,7 @@ namespace llvm {
 /// Reconstruct the original name of a value from debug symbols. Output string is in C syntax no matter the source language. Will fail if not compiled with debug symbols.
 /// TODO: Handle returning multiple aliasing names
 std::string llvm::DiagnosticNameGenerator::getOriginalName(const Value* V) {
-  errs().SetBufferSize(100000);
+  LLVM_DEBUG(errs().SetBufferSize(100000));
   ++NumGON;
   return getOriginalNameImpl(V, nullptr);
 }
