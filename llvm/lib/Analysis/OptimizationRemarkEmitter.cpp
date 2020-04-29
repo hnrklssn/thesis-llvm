@@ -147,9 +147,12 @@ bool OptimizationRemarkEmitter::isAnyRemarkEnabledByMetadata(StringRef PassName)
   SmallVector<MDNode*, 1> MDs;
   getAllRemarkMetadata(MDs);
   for (auto MD : MDs) {
-    for (auto &MDOp : MD->operands()) {
-      if (auto MDS = dyn_cast<MDString>(MDOp.get())) {
-        if (MDS->getString().equals(PassName)) return true;
+    // first string is remark type (remark, remark_analysis, remark_missed)
+    for (unsigned i = 1; i < MD->getNumOperands(); i++) {
+      if (auto MDS = dyn_cast<MDString>(MD->getOperand(i).get())) {
+        Regex Pattern(MDS->getString());
+        if (Pattern.isValid() && Pattern.match(PassName))
+          return true;
       }
     }
   }
