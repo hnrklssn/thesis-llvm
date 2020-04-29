@@ -4,13 +4,7 @@
 #include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/DiagnosticSema.h"
 #include "llvm/ADT/StringRef.h"
-//#include "clang/AST/ASTContext.h"
-//#include "clang/Sema/SemaInternal.h"
-//#include "clang/AST/Attrs.inc"
-//#include "clang/Basic/DiagnosticSema.h"
-//#include "clang/Sema/ParsedAttr.h"
-//#include "clang/Sema/Sema.h"
-//#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/ErrorHandling.h"
 
 using namespace clang;
 //using namespace sema;
@@ -58,6 +52,24 @@ namespace clang {
     Vals.push_back(cast<StringLiteral>(arg2)->getString());
   }
 
+  std::string Group;
+  switch (AL.getSemanticSpelling()) {
+  case RemarkAttr::Spelling::Pragma_remark:
+    Group = "pass";
+    break;
+  case RemarkAttr::Spelling::Pragma_remark_analysis:
+    Group = "pass-analysis";
+    break;
+  case RemarkAttr::Spelling::Pragma_remark_missed:
+    Group = "pass-missed";
+    break;
+  default:
+    llvm_unreachable("pragma remark spelling missing");
+  }
+  // Signal that at least one remark in this group is activated,
+  // otherwise they are all ignored
+  S.Diags.setSeverityForGroup(diag::Flavor::Remark, Group,
+                              diag::Severity::Remark);
   return RemarkAttr::Create(S.Context, Opt, Vals.begin(),
                                 Vals.size(), AL);
 }
