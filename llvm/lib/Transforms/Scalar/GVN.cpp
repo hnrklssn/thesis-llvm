@@ -864,15 +864,11 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
       // Use the most immediately dominating value
       if (OtherAccess) {
         if (DT->dominates(cast<Instruction>(OtherAccess),
-                          cast<Instruction>(U))) {
+                          cast<Instruction>(U)))
           OtherAccess = U;
-        } else if (!DT->dominates(cast<Instruction>(U),
-                                  cast<Instruction>(OtherAccess))) {
-          // No strict domination relationship implies partial redundancy
-          // and we don't know which one
-          OtherAccess = nullptr;
-          break;
-        } // else: the current access is more immediate to LI, so keep it
+        else
+          assert(DT->dominates(cast<Instruction>(U),
+                               cast<Instruction>(OtherAccess)));
       } else
         OtherAccess = U;
     }
