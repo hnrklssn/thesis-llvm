@@ -845,6 +845,17 @@ static bool isLifetimeStart(const Instruction *Inst) {
   return false;
 }
 
+/// Assuming To can be reached from both From and Between, does Between lie on
+/// every path from From to To?
+static bool liesBetween(const Instruction *From, Instruction *Between,
+                        const Instruction *To, DominatorTree *DT) {
+  if (From->getParent() == Between->getParent())
+    return DT->dominates(From, Between);
+  SmallSet<BasicBlock *, 1> Exclusion;
+  Exclusion.insert(Between->getParent());
+  return !isPotentiallyReachable(From, To, &Exclusion, DT);
+}
+
 /// Try to locate the three instruction involved in a missed
 /// load-elimination case that is due to an intervening store.
 static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
@@ -863,8 +874,7 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
         DT->dominates(cast<Instruction>(U), LI)) {
       // Use the most immediately dominating value
       if (OtherAccess) {
-        if (DT->dominates(cast<Instruction>(OtherAccess),
-                          cast<Instruction>(U)))
+        if (DT->dominates(cast<Instruction>(OtherAccess), cast<Instruction>(U)))
           OtherAccess = U;
         else
           assert(DT->dominates(cast<Instruction>(U),
@@ -872,6 +882,30 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
       } else
         OtherAccess = U;
     }
+
+  if (!OtherAccess) {
+    // There is no dominating use, check if we can find a closest non-dominating
+    // use that lies between any other potentially available use and LI.
+    for (auto *U : LI->getPointerOperand()->users()) {
+      if (U != LI && (isa<LoadInst>(U) || isa<StoreInst>(U)) &&
+          isPotentiallyReachable(cast<Instruction>(U), LI, nullptr, DT)) {
+        if (OtherAccess) {
+          if (liesBetween(cast<Instruction>(OtherAccess), cast<Instruction>(U),
+                          LI, DT)) {
+            OtherAccess = U;
+          } else if (!liesBetween(cast<Instruction>(U),
+                                  cast<Instruction>(OtherAccess), LI, DT)) {
+            // These uses are both partially available at LI were it not for the
+            // clobber, but neither lies strictly after the other.
+            OtherAccess = nullptr;
+            break;
+          } // else: keep current OtherAccess since it lies between U and LI
+        } else {
+          OtherAccess = U;
+        }
+      }
+    }
+  }
 
   if (OtherAccess)
     R << " in favor of " << NV("OtherAccess", OtherAccess);
