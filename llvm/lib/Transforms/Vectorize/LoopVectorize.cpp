@@ -879,13 +879,20 @@ static OptimizationRemarkAnalysis createLVAnalysis(const char *PassName,
 
 namespace llvm {
 
-void reportVectorizationFailure(const StringRef DebugMsg,
-    const StringRef OREMsg, const StringRef ORETag,
-    OptimizationRemarkEmitter *ORE, Loop *TheLoop, Instruction *I) {
+void reportVectorizationFailure(
+    const StringRef DebugMsg, const StringRef OREMsg, const StringRef ORETag,
+    OptimizationRemarkEmitter *ORE, Loop *TheLoop, Instruction *I,
+    std::function<void(OptimizationRemarkAnalysis &)> ExtraInfo) {
   LLVM_DEBUG(debugVectorizationFailure(DebugMsg, I));
   LoopVectorizeHints Hints(TheLoop, true /* doesn't matter */, *ORE);
-  ORE->emit(createLVAnalysis(Hints.vectorizeAnalysisPassName(),
-                ORETag, TheLoop, I) << OREMsg);
+  auto Analysis =
+      createLVAnalysis(Hints.vectorizeAnalysisPassName(), ORETag, TheLoop, I)
+      << OREMsg;
+  Analysis << ore::setExtraArgs() << ore::NV("DebugMsg", DebugMsg);
+  if (ORE->allowExtraAnalysis(DEBUG_TYPE) && ExtraInfo) {
+    ExtraInfo(Analysis);
+  }
+  ORE->emit(Analysis);
 }
 
 } // end namespace llvm

@@ -57,6 +57,7 @@
 #define LLVM_TRANSFORMS_VECTORIZE_LOOPVECTORIZE_H
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include <functional>
@@ -170,9 +171,12 @@ public:
 /// purposes along with the corresponding optimization remark \p RemarkName.
 /// If \p I is passed, it is an instruction that prevents vectorization.
 /// Otherwise, the loop \p TheLoop is used for the location of the remark.
-void reportVectorizationFailure(const StringRef DebugMsg,
-    const StringRef OREMsg, const StringRef ORETag,
-    OptimizationRemarkEmitter *ORE, Loop *TheLoop, Instruction *I = nullptr);
+/// Optionally, a function can be passed to add extra arguments for further
+/// explanation in optimization reports.
+void reportVectorizationFailure(
+    const StringRef DebugMsg, const StringRef OREMsg, const StringRef ORETag,
+    OptimizationRemarkEmitter *ORE, Loop *TheLoop, Instruction *I = nullptr,
+    std::function<void(OptimizationRemarkAnalysis &)> ExtraInfo = nullptr);
 
 } // end namespace llvm
 

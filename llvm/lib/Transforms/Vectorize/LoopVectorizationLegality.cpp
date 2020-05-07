@@ -15,11 +15,14 @@
 //
 #include "llvm/Transforms/Vectorize/LoopVectorizationLegality.h"
 #include "llvm/Analysis/Loads.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Analysis/VectorUtils.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/PatternMatch.h"
 #include "llvm/Transforms/Vectorize/LoopVectorize.h"
+#include <functional>
+#include <string>
 
 using namespace llvm;
 using namespace PatternMatch;
@@ -1074,9 +1077,28 @@ bool LoopVectorizationLegality::canVectorizeLoopCFG(Loop *Lp,
 
   // We must have a single backedge.
   if (Lp->getNumBackEdges() != 1) {
-    reportVectorizationFailure("The loop must have a single backedge",
-        "loop control flow is not understood by vectorizer",
-        "CFGNotUnderstood", ORE, TheLoop);
+    auto ExtraInfoCb = [&](OptimizationRemarkAnalysis &Analysis) {
+      SmallVector<BasicBlock *, 2> LoopLatches;
+      auto Head = Lp->getHeader();
+      Lp->getLoopLatches(LoopLatches);
+      for (auto Latch : LoopLatches) {
+        auto T = Latch->getTerminator();
+        for (unsigned i = 0; i < T->getNumSuccessors(); i++) {
+          if (T->getSuccessor(i) == Head) {
+            if (T->getNumSuccessors() > 1) {
+              std::string Description = "backedge (condition ";
+              Analysis << ore::NV(Description + (i ? "false)" : "true)"), T);
+            } else {
+              Analysis << ore::NV("backedge", T);
+            }
+          }
+        }
+      }
+    };
+    reportVectorizationFailure(
+        "The loop must have a single backedge",
+        "loop control flow is not understood by vectorizer", "CFGNotUnderstood",
+        ORE, TheLoop, nullptr, ExtraInfoCb);
     if (DoExtraAnalysis)
       Result = false;
     else
@@ -1085,9 +1107,22 @@ bool LoopVectorizationLegality::canVectorizeLoopCFG(Loop *Lp,
 
   // We must have a single exiting block.
   if (!Lp->getExitingBlock()) {
-    reportVectorizationFailure("The loop must have an exiting block",
-        "loop control flow is not understood by vectorizer",
-        "CFGNotUnderstood", ORE, TheLoop);
+    auto ExtraInfoCb = [&](OptimizationRemarkAnalysis &Analysis) {
+      SmallVector<BasicBlock *, 4> Exits;
+      Lp->getExitingBlocks(Exits);
+      if (Exits.empty()) {
+        Analysis << ". There is no exiting block.";
+        return;
+      }
+      Analysis << ". Exiting blocks: ";
+      for (auto Exit : Exits) {
+        Analysis << ore::NV("exiting block terminator", Exit->getTerminator());
+      }
+    };
+    reportVectorizationFailure(
+        "The loop must have a single exiting block",
+        "loop control flow is not understood by vectorizer", "CFGNotUnderstood",
+        ORE, TheLoop, nullptr, ExtraInfoCb);
     if (DoExtraAnalysis)
       Result = false;
     else
@@ -1098,9 +1133,25 @@ bool LoopVectorizationLegality::canVectorizeLoopCFG(Loop *Lp,
   // checked at the end of each iteration. With that we can assume that all
   // instructions in the loop are executed the same number of times.
   if (Lp->getExitingBlock() != Lp->getLoopLatch()) {
-    reportVectorizationFailure("The exiting block is not the loop latch",
-        "loop control flow is not understood by vectorizer",
-        "CFGNotUnderstood", ORE, TheLoop);
+    auto ExtraInfoCb = [&](OptimizationRemarkAnalysis &Analysis) {
+      if (!Lp->getExitingBlock() || !Lp->getLoopLatch())
+        return;
+      Analysis << ore::NV("exiting block terminator",
+                          Lp->getExitingBlock()->getTerminator())
+               << ore::NV("loop latch terminator",
+                          Lp->getLoopLatch()->getTerminator());
+    };
+    Instruction *Term = nullptr;
+    // This will highlight one of the relevant BBs in case extra info is not
+    // included
+    if (Lp->getExitingBlock())
+      Term = Lp->getExitingBlock()->getTerminator();
+    else if (Lp->getLoopLatch())
+      Term = Lp->getLoopLatch()->getTerminator();
+    reportVectorizationFailure(
+        "The exiting block is not the loop latch",
+        "loop control flow is not understood by vectorizer", "CFGNotUnderstood",
+        ORE, TheLoop, Term, ExtraInfoCb);
     if (DoExtraAnalysis)
       Result = false;
     else

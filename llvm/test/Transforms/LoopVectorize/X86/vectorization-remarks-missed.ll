@@ -48,7 +48,7 @@
 ; CHECK: remark: source.cpp:29:7: loop not vectorized: control flow cannot be substituted for a select
 ; CHECK: remark: source.cpp:27:3: loop not vectorized
 
-; YAML:       --- !Analysis
+; YAML:      --- !Analysis
 ; YAML-NEXT: Pass:            loop-vectorize
 ; YAML-NEXT: Name:            CantComputeNumberOfIterations
 ; YAML-NEXT: DebugLoc:        { File: source.cpp, Line: 5, Column: 9 }
@@ -71,7 +71,7 @@
 ; YAML-NEXT: DebugLoc:        { File: source.cpp, Line: 12, Column: 8 }
 ; YAML-NEXT: Function:        _Z13test_disabledPii
 ; YAML-NEXT: Args:
-; YAML-NEXT:   - String:          'loop not vectorized: vectorization and interleaving are explicitly disabled, or the loop has already been vectorized
+; YAML-NEXT:   - String:          'loop not vectorized: vectorization and interleaving are explicitly disabled, or the loop has already been vectorized'
 ; YAML-NEXT: ...
 ; YAML-NEXT: --- !Analysis
 ; YAML-NEXT: Pass:            ''
@@ -109,6 +109,7 @@
 ; YAML-NEXT: Args:
 ; YAML-NEXT:   - String:          'loop not vectorized: '
 ; YAML-NEXT:   - String:          control flow cannot be substituted for a select
+; YAML-NEXT:   - DebugMsg:        Control flow cannot be substituted for a select
 ; YAML-NEXT: ...
 ; YAML-NEXT: --- !Analysis
 ; YAML-NEXT: Pass:            loop-vectorize
@@ -118,6 +119,7 @@
 ; YAML-NEXT: Args:
 ; YAML-NEXT:   - String:          'loop not vectorized: '
 ; YAML-NEXT:   - String:          value that could not be identified as reduction is used outside the loop
+; YAML-NEXT:   - DebugMsg:        Found an unidentified PHI
 ; YAML-NEXT: ...
 ; YAML-NEXT: --- !Analysis
 ; YAML-NEXT: Pass:            loop-vectorize

@@ -3,7 +3,7 @@
 
 ; Make sure LV legal bails out when the exiting block != loop latch.
 ; CHECK-LABEL: "latch_is_not_exiting"
-; CHECK: LV: Not vectorizing: The exiting block is not the loop latch.
+; CHECK: LV: Not vectorizing: The exiting block is not the loop latch br i1 %or.cond, label %for.body.backedge, label %for.end
 define i32 @latch_is_not_exiting() {
 entry:
   br label %for.body
@@ -24,7 +24,7 @@ for.end:
 
 ; Make sure LV legal bails out when there is no exiting block
 ; CHECK-LABEL: "no_exiting_block"
-; CHECK: LV: Not vectorizing: The loop must have an exiting block.
+; CHECK: LV: Not vectorizing: The loop must have a single exiting block.
 define i32 @no_exiting_block() {
 entry:
   br label %for.body
