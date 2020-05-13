@@ -1534,7 +1534,7 @@ static bool sink(Instruction &I, LoopInfo *LI, DominatorTree *DT,
   LLVM_DEBUG(dbgs() << "LICM sinking instruction: " << I << "\n");
   ORE->emit([&]() {
     return OptimizationRemark(DEBUG_TYPE, "InstSunk", &I)
-           << "sinking " << ore::NV("Inst", &I);
+      << "sinking " << ore::DV("Inst", &I) << " with opcode " << I.getOpcodeName();
   });
   bool Changed = false;
   if (isa<LoadInst>(I))
@@ -1637,7 +1637,9 @@ static void hoist(Instruction &I, const DominatorTree *DT, const Loop *CurLoop,
                     << "\n");
   ORE->emit([&]() {
     return OptimizationRemark(DEBUG_TYPE, "Hoisted", &I) << "hoisting "
-                                                         << ore::NV("Inst", &I);
+                                                         << ore::DV("Inst", &I)
+                                                         << " with opcode "
+                                                         << I.getOpcodeName();
   });
 
   // Metadata can be dependent on conditions we are hoisting above.
