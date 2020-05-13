@@ -70,6 +70,9 @@ STATISTIC(NumBitcastWidenSuccesses,
 STATISTIC(NumBitcastNarrowingSuccesses,
           "Number of successfully analyzed narrowing bitcast instructions for "
           "which DIType could be found");
+STATISTIC(NumTypeCalibrate, "Number of calls to calibrateDebugType");
+STATISTIC(NumTypeCompare, "Number of calls to compareValueTypeAndDebugType");
+STATISTIC(NumTypeCompareInternal, "Number of calls to compareValueTypeAndDebugTypeInternal");
 
 namespace llvm {
 
@@ -228,6 +231,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
         const Type *Ty, const DIType *DITy,
         DenseMap<const DICompositeType *, const StructType *>
             &EquivalentStructTypes) {
+      ++NumTypeCompareInternal;
       if (!DITy) {
         DLOG("dity null, Ty: " << *Ty);
         llvm_unreachable("DITy null");
@@ -518,6 +522,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
     } // namespace
 
   TypeCompareResult DiagnosticNameGenerator::compareValueTypeAndDebugType(const Type *Ty, const DIType *DITy) {
+    ++NumTypeCompare;
     if (!DITy) return NoMatch;
     LLVM_DEBUG(errs() << "valuetype: " << *Ty << " dbg type: " << *DITy << "\n");
     //if (DITy->getTag() == dwarf::DW_TAG_member) return NoMatch;
@@ -547,6 +552,7 @@ std::pair<TypeCompareResult, uint32_t> DiagnosticNameGenerator::isPointerChainTo
   // TODO @henrik: prevent infinite loop
   std::pair<TypeCompareResult, DIType*>
   DiagnosticNameGenerator::calibrateDebugType(const Type *Ty, DIType *DITy) {
+    ++NumTypeCalibrate;
     DLOG("entering " << __FUNCTION__);
     DLOG("ty: " << *Ty);
     DLOG("dity: " << *DITy);
@@ -1987,7 +1993,7 @@ namespace llvm {
 /// Reconstruct the original name of a value from debug symbols. Output string is in C syntax no matter the source language. Will fail if not compiled with debug symbols.
 /// TODO: Handle returning multiple aliasing names
 std::string llvm::DiagnosticNameGenerator::getOriginalName(const Value* V) {
-  errs().SetBufferSize(100000);
+  LLVM_DEBUG(errs().SetBufferSize(100000));
   ++NumGON;
   return getOriginalNameImpl(V, nullptr);
 }
