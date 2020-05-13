@@ -869,8 +869,8 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
   R << "load of type " << NV("Type", LI->getType()) << " not eliminated"
     << setExtraArgs();
 
-  for (auto *U : LI->getPointerOperand()->users())
-    if (U != LI && (isa<LoadInst>(U) || isa<StoreInst>(U)) &&
+  for (auto *U : LI->getPointerOperand()->users()) {
+    if (U != LI && (isa<LoadInst>(U) || isa<StoreInst>(U)) && cast<Instruction>(U)->getFunction() == LI->getFunction() &&
         DT->dominates(cast<Instruction>(U), LI)) {
       // Use the most immediately dominating value
       if (OtherAccess) {
@@ -882,12 +882,14 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
       } else
         OtherAccess = U;
     }
+  }
 
   if (!OtherAccess) {
     // There is no dominating use, check if we can find a closest non-dominating
     // use that lies between any other potentially available use and LI.
     for (auto *U : LI->getPointerOperand()->users()) {
       if (U != LI && (isa<LoadInst>(U) || isa<StoreInst>(U)) &&
+          cast<Instruction>(U)->getFunction() == LI->getFunction() &&
           isPotentiallyReachable(cast<Instruction>(U), LI, nullptr, DT)) {
         if (OtherAccess) {
           if (liesBetween(cast<Instruction>(OtherAccess), cast<Instruction>(U),
