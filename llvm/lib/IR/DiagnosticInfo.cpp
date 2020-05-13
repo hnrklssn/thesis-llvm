@@ -186,12 +186,12 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key,
     if (auto *F = I->getCalledFunction()) {
       LLVM_DEBUG(errs() << "\033[1;36m our function name: " << F->getName() << "\n\n");
 		  LLVM_DEBUG(errs() << "\033[0m\n");
-	    Val = F->getName();
+	    Val = F->getName().str();
       Val = Val + " (3)";
 	  } else if(I->hasName()) {
       LLVM_DEBUG(errs() << "\033[1;35m our value name: " << I->getName() << "\n\n");
 		  LLVM_DEBUG(errs() << "\033[0m\n");
-	    Val = I->getName();
+	    Val = I->getName().str();
       Val = Val + " (4)";
 	  } else {
 		Val = "value without name (5)";
@@ -224,7 +224,7 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key,
       Val = Val + " (7)";
     }
   } else {
-    Val = V->getName();
+    Val = V->getName().str();
     Val = Val + " (8)";
   }
 

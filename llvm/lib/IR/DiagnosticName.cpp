@@ -112,7 +112,7 @@ static void printValueType(const Type *T, unsigned int indent = 0) {
       printValueType(StructTy->getStructElementType(i), indent + 1);
     }
   }
-  if (auto SeqTy = dyn_cast<SequentialType>(T)) {
+  if (auto SeqTy = dyn_cast<ArrayType>(T)) {
     printValueType(SeqTy->getElementType(), indent + 1);
   }
 }
@@ -156,7 +156,7 @@ static void printDbgType(const DIType *T, unsigned int indent = 0) {
   if (auto StructTy = dyn_cast<StructType>(Outer)) {
     return isFirstFieldNestedValueTypeOrEqual(StructTy->getElementType(0), Inner, NestingDepth);
   }
-  if (auto SeqTy = dyn_cast<SequentialType>(Outer)) {
+  if (auto SeqTy = dyn_cast<ArrayType>(Outer)) {
     return isFirstFieldNestedValueTypeOrEqual(SeqTy->getElementType(),
                                               Inner, NestingDepth);
   }
@@ -369,7 +369,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
              So DW_TAG_array_type matches sequential types,
              pointers to sequentials, and normal pointers.
           */
-          if (!isa<SequentialType>(PtrTy->getElementType())) {
+          if (!isa<ArrayType>(PtrTy->getElementType())) {
             DLOG("dity is array, but ty does not point to seq");
             // Value type is just pointer, so just compare base types
             res = compareValueTypeAndDebugTypeInternal(
@@ -462,7 +462,7 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
             }
           }
         }
-      } else if (auto SeqTy = dyn_cast<SequentialType>(Ty)) {
+      } else if (auto SeqTy = dyn_cast<ArrayType>(Ty)) {
         DLOG("seqty: " << *SeqTy);
         DLOG("dity: " << *DITy);
         switch(DITy->getTag()) {
@@ -909,7 +909,7 @@ namespace llvm {
     DIExpression *Expr = VI->getExpression();
     if(!Expr->isFragment()) {
       if (FinalType) *FinalType = Type;
-      return Val->getName();
+      return Val->getName().str();
     }
     DLOG("expr: " << *Expr);
     DLOG("type: " << *Type);
@@ -918,7 +918,7 @@ namespace llvm {
     if (Expr->extractIfOffset(Offset)) { // FIXME extractIfOffset seems broken. Workaround below for now.
       llvm_unreachable("extractIfOffset works?");
       if (FinalType) *FinalType = Type;
-      return Val->getName();
+      return Val->getName().str();
     }
 
     Optional<DIExpression::FragmentInfo> FIO = Expr->getFragmentInfo();
@@ -1125,7 +1125,12 @@ namespace llvm {
       name += ">(";
       name += IdxName;
       name += ")";
-    } else if (auto SeqTy = dyn_cast<SequentialType>(Ty)) {
+    } else if (auto SeqTy = dyn_cast<ArrayType>(Ty)) {
+      name += "[";
+      name += IdxName;
+      name += "]";
+      Ty = SeqTy->getElementType();
+    } else if (auto SeqTy = dyn_cast<VectorType>(Ty)) {
       name += "[";
       name += IdxName;
       name += "]";
@@ -1282,9 +1287,9 @@ namespace llvm {
       DLOG("typing non const idx: " << *idx_last_const->get());
       if (auto ArrayTy = dyn_cast<ArrayType>(ValueTy)) {
         ValueTy = ArrayTy->getArrayElementType();
-      } else if (auto CompTy = dyn_cast<CompositeType>(ValueTy)) {
-        DLOG("comp type: " << *CompTy);
-        ValueTy = CompTy->getTypeAtIndex(idx_last_const->get());
+      } else if (auto StructTy = dyn_cast<StructType>(ValueTy)) {
+        DLOG("comp type: " << *StructTy);
+        ValueTy = StructTy->getTypeAtIndex(idx_last_const->get());
       } else {
         DLOG("valuety: " << *ValueTy);
         llvm_unreachable("unexpected value type");
@@ -1397,7 +1402,7 @@ namespace llvm {
     std::string FuncName = Call->getName().str() + " (fallback name)";
     auto CalledFunc = Call->getCalledFunction();
     if (CalledFunc) {
-      FuncName = CalledFunc->getName();
+      FuncName = CalledFunc->getName().str();
       if (auto IntrID = CalledFunc->getIntrinsicID()) {
         switch (IntrID) {
         case Intrinsic::memset:
@@ -1848,7 +1853,7 @@ namespace llvm {
       if (CDS->isString()) {
         LLVM_DEBUG(errs() << __FUNCTION__ << " constant string: " << *C << " "
                           << CDS->getAsCString() << "\n");
-        return CDS->getAsString();
+        return CDS->getAsString().str();
       }
       std::string Name;
       unsigned NumElems = CDS->getNumElements();
@@ -1885,10 +1890,10 @@ namespace llvm {
     }
     if (auto GIS = dyn_cast<GlobalIndirectSymbol>(C)) {
       errs() << "GIS: " << *GIS << " base obj: " << *GIS->getBaseObject() << "\n";
-      return GIS->getName();
+      return GIS->getName().str();
     }
     if (auto GF = dyn_cast<Function>(C)) {
-      return GF->getName();
+      return GF->getName().str();
     }
     if (auto GVar = dyn_cast<GlobalVariable>(C)) {
       DLOG("GVar: " << *GVar << " getname: " << GVar->getName()
@@ -1909,7 +1914,7 @@ namespace llvm {
         return name;
         return getOriginalNameImpl(GVar->getInitializer(), FinalType);
       }
-      return GVar->getName();
+      return GVar->getName().str();
     }
     errs() << "unhandled constant type: " << *C << "\n";
     return "";
@@ -1945,7 +1950,7 @@ namespace llvm {
       }
       Name += "}";
     } else if (auto Arg = dyn_cast<Argument>(V)) {
-      Name = Arg->getName();
+      Name = Arg->getName().str();
     } else {
       errs() << "unhandled value type: " << *V << "\n";
       Name = ""; // TODO: fallback
