@@ -678,8 +678,8 @@ std::pair<TypeCompareResult, uint32_t> DiagnosticNameGenerator::isPointerChainTo
       LLVM_DEBUG(DDI->getRawExpression()->print(errs(), nullptr, true));
       LLVM_DEBUG(errs() << "\n");
     } else {
-      errs() << "UNKNOWN INTRINSIC\n";
-      I->dump();
+      //errs() << "UNKNOWN INTRINSIC\n";
+      //I->dump();
     }
     for (auto &U : I->operands()) {
       LLVM_DEBUG(errs() << "uselmao: ");
@@ -1304,7 +1304,7 @@ namespace llvm {
       if (auto Derived = dyn_cast<DIDerivedType>(T)) T = Derived->getBaseType();
       else if (auto Composite = dyn_cast<DICompositeType>(T)) T = Composite->getBaseType();
       else {
-        errs() << "unhandled ditype: " << *T << "\n";
+        //errs() << "unhandled ditype: " << *T << "\n";
         llvm_unreachable("Unhandled DIType");
       }
 
@@ -1424,7 +1424,8 @@ namespace llvm {
           FuncName = "sqrt";
           break;
         default:
-          errs() << "unhandled intrinsic: " << FuncName << "\n";
+	  ;
+          //errs() << "unhandled intrinsic: " << FuncName << "\n";
         }
       }
     }
@@ -1834,7 +1835,7 @@ namespace llvm {
       }
       return "alloca<" + TypeName + ">";
     }
-    errs() << "unhandled instruction type: " << *I << "\n";
+    //errs() << "unhandled instruction type: " << *I << "\n";
     return "";
   }
 
@@ -1895,7 +1896,7 @@ namespace llvm {
       return ConstExprStr;
     }
     if (auto GIS = dyn_cast<GlobalIndirectSymbol>(C)) {
-      errs() << "GIS: " << *GIS << " base obj: " << *GIS->getBaseObject() << "\n";
+      //errs() << "GIS: " << *GIS << " base obj: " << *GIS->getBaseObject() << "\n";
       return GIS->getName().str();
     }
     if (auto GF = dyn_cast<Function>(C)) {
@@ -1922,7 +1923,7 @@ namespace llvm {
       }
       return GVar->getName().str();
     }
-    errs() << "unhandled constant type: " << *C << "\n";
+    //errs() << "unhandled constant type: " << *C << "\n";
     return "";
   }
 
@@ -1958,7 +1959,7 @@ namespace llvm {
     } else if (auto Arg = dyn_cast<Argument>(V)) {
       Name = Arg->getName().str();
     } else {
-      errs() << "unhandled value type: " << *V << "\n";
+      //errs() << "unhandled value type: " << *V << "\n";
       Name = ""; // TODO: fallback
       goto ret;
     }
@@ -1993,7 +1994,7 @@ namespace llvm {
 /// Reconstruct the original name of a value from debug symbols. Output string is in C syntax no matter the source language. Will fail if not compiled with debug symbols.
 /// TODO: Handle returning multiple aliasing names
 std::string llvm::DiagnosticNameGenerator::getOriginalName(const Value* V) {
-  LLVM_DEBUG(errs().SetBufferSize(100000));
+  //LLVM_DEBUG(errs().SetBufferSize(100000));
   ++NumGON;
   return getOriginalNameImpl(V, nullptr);
 }

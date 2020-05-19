@@ -2095,11 +2095,6 @@ processGlobal(GlobalValue &GV,
   if (GV.getName().startswith("llvm."))
     return false;
 
-  LLVM_DEBUG(errs() << "GV: " << GV << "\n";
-  for (auto &U : GV.uses()) {
-    errs() << "user: " << *U.getUser() << "\n";
-  });
-
   GlobalStatus GS;
 
   if (GlobalStatus::analyzeGlobal(&GV, GS))
@@ -3036,9 +3031,7 @@ struct GlobalOptLegacyPass : public ModulePass {
   }
 
   bool runOnModule(Module &M) override {
-    errs() << "---GlobalOptLegacyPass---\n";
     if (skipModule(M)) {
-      errs() << "skipModule\n";
       return false;
     }
 
