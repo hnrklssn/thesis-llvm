@@ -1266,8 +1266,9 @@ namespace llvm {
       T = trimNonPointerDerivedTypes(T);
       if (T)
         DLOG("T: " << *T);
+      // TODO: double check whether we should get base type of array!
       auto BaseType = T->getTag() == dwarf::DW_TAG_array_type
-                          ? T
+                          ? cast<DICompositeType>(T)->getBaseType()
                           : cast<DIDerivedType>(T)->getBaseType();
       if (BaseType) {
         DLOG("baseType: " << *BaseType);
