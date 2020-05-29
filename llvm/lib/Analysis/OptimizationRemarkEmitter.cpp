@@ -37,7 +37,6 @@ OptimizationRemarkEmitter::OptimizationRemarkEmitter(const Function *F)
   // Generate LoopInfo from it.
   OwnedLI = std::make_unique<LoopInfo>(DT);
   LI = OwnedLI.get();
-  LI->analyze(DT);
 
   if (!F->getContext().getDiagnosticsHotnessRequested()) {
     return;
@@ -58,7 +57,7 @@ bool OptimizationRemarkEmitter::invalidate(
   bool LIValid = LI && Inv.invalidate<LoopAnalysis>(F, PA);
   // This analysis has no state and so can be trivially preserved but it needs
   // a fresh view of BFI if it was constructed with one.
-  if (BFI && Inv.invalidate<BlockFrequencyAnalysis>(F, PA) && LIValid)
+  if (BFI && Inv.invalidate<BlockFrequencyAnalysis>(F, PA) || LIValid)
     return true;
 
   // Otherwise this analysis result remains valid.
@@ -182,20 +181,21 @@ OptimizationRemarkEmitterWrapperPass::OptimizationRemarkEmitterWrapperPass()
 
 bool OptimizationRemarkEmitterWrapperPass::runOnFunction(Function &Fn) {
   BlockFrequencyInfo *BFI;
-  LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  LoopInfo *LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 
   if (Fn.getContext().getDiagnosticsHotnessRequested())
     BFI = &getAnalysis<LazyBlockFrequencyInfoPass>().getBFI();
   else
     BFI = nullptr;
 
-  ORE = std::make_unique<OptimizationRemarkEmitter>(&Fn, &LI, BFI);
+  ORE = std::make_unique<OptimizationRemarkEmitter>(&Fn, LI, BFI);
   return false;
 }
 
 void OptimizationRemarkEmitterWrapperPass::getAnalysisUsage(
     AnalysisUsage &AU) const {
   LazyBlockFrequencyInfoPass::getLazyBFIAnalysisUsage(AU);
+  AU.addRequired<LoopInfoWrapperPass>();
   AU.setPreservesAll();
 }
 
@@ -222,5 +222,6 @@ static const char ore_name[] = "Optimization Remark Emitter";
 INITIALIZE_PASS_BEGIN(OptimizationRemarkEmitterWrapperPass, ORE_NAME, ore_name,
                       false, true)
 INITIALIZE_PASS_DEPENDENCY(LazyBFIPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_END(OptimizationRemarkEmitterWrapperPass, ORE_NAME, ore_name,
                     false, true)
