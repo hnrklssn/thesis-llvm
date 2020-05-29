@@ -301,10 +301,11 @@ bool DiagnosticInfoIROptimization::isOptRemarkEnabledByMetadata() const {
   // Module level remark output
   const Module *M = Func.getParent();
   auto NamedMD = M->getNamedMetadata("llvm.remarks");
-  for (auto MD : NamedMD->operands()) {
-    if (metadataEnablesOptRemark(PassName, MD, Kind))
-      return true;
-  }
+  if (NamedMD)
+    for (auto MD : NamedMD->operands()) {
+      if (metadataEnablesOptRemark(PassName, MD, Kind))
+        return true;
+    }
 
   // Loop level remark output
   Optional<MDNode *> LR = getLoopID();

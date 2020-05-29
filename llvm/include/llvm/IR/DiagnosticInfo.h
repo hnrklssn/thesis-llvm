@@ -664,6 +664,7 @@ public:
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() >= DK_FirstRemark && DI->getKind() <= DK_LastRemark;
   }
+  bool isOptRemarkEnabledByMetadata() const;
 
 private:
   /// The IR value (currently basic block) that the optimization operates on.
