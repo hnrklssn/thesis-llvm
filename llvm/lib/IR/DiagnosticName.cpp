@@ -1267,9 +1267,16 @@ namespace llvm {
       if (T)
         DLOG("T: " << *T);
       // TODO: double check whether we should get base type of array!
-      auto BaseType = T->getTag() == dwarf::DW_TAG_array_type
-                          ? cast<DICompositeType>(T)->getBaseType()
-                          : cast<DIDerivedType>(T)->getBaseType();
+      DIType *BaseType;
+      if(T->getTag() == dwarf::DW_TAG_array_type) {
+        auto BaseTy = cast<PointerType>(OP->getType())->getElementType();
+        // DW_TAG_array_type can both be raw PointerType, pointer to ArrayType, and ArrayType.
+        // If OP is pointer to array we need to keep T to match the ArrayType element type.
+        if (compareValueTypeAndDebugType(BaseTy, T))
+          BaseType = T;
+        else
+          BaseType = cast<DICompositeType>(T)->getBaseType();
+      } else BaseType = cast<DIDerivedType>(T)->getBaseType();
       if (BaseType) {
         DLOG("baseType: " << *BaseType);
       } else {
@@ -1305,7 +1312,8 @@ namespace llvm {
       if (auto Derived = dyn_cast<DIDerivedType>(T)) T = Derived->getBaseType();
       else if (auto Composite = dyn_cast<DICompositeType>(T)) T = Composite->getBaseType();
       else {
-        //errs() << "unhandled ditype: " << *T << "\n";
+        errs() << "unhandled ditype: " << *T << "\n";
+        errs() << "in gep: " << *GEP << "\n";
         llvm_unreachable("Unhandled DIType");
       }
 
