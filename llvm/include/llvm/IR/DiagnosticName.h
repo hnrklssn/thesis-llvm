@@ -47,6 +47,7 @@ private:
   SmallSet<const PHINode *, 4> CurrentPhis;
   /// Fast lookup of DITypes referencing a given DIType
   DenseMap<DIType*, SmallVector<DIType*, 4>*> DITypeUsers;
+  DenseMap<DIType *, SmallVector<DIType *, 4> *>* getDITypeUsers();
   DIDerivedType *createPointerType(DIType *BaseTy);
   TypeCompareResult compareValueTypeAndDebugType(const Type *Ty, const DIType *DITy);
   std::string getFragmentTypeName(DIType *T, int64_t Offset, DIType **FinalType,

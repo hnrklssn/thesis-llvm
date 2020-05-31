@@ -190,34 +190,6 @@ llvm::DiagnosticNameGenerator llvm::DiagnosticNameGenerator::create(Module *M) {
 }
 llvm::DiagnosticNameGenerator::DiagnosticNameGenerator(Module *M, DIBuilder *B)
     : M(M), Builder(B) {
-  if (!M)
-    return;
-  DIF.processModule(*M);
-  for (auto User : DIF.types()) {
-    if (auto Comp = dyn_cast<DICompositeType>(User)) {
-      for (auto Elem : Comp->getElements()) {
-        if (!isa_and_nonnull<DIType>(Elem))
-          continue;
-        // Skipping derived fluff types not only saves memory and shortens the
-        // chain to traverse, but it also makes the length of the use chain
-        // predictable. This lets us cap the number of uses to traverse.
-        auto RealElem = trimNonPointerDerivedTypes(cast<DIType>(Elem));
-        if (!DITypeUsers.count(RealElem)) {
-          DITypeUsers.insert(
-              std::make_pair(RealElem, new SmallVector<DIType *, 4>));
-        }
-        DITypeUsers.find(RealElem)->getSecond()->push_back(cast<DIType>(User));
-      }
-    } else if (auto Derived = dyn_cast<DIDerivedType>(User)) {
-      auto Base = trimNonPointerDerivedTypes(Derived->getBaseType());
-      if (!Base) continue;
-      if (!DITypeUsers.count(Base)) {
-        DITypeUsers.insert(
-            std::make_pair(Base, new SmallVector<DIType *, 4>));
-      }
-      DITypeUsers.find(Base)->getSecond()->push_back(cast<DIType>(User));
-    }
-  }
 }
 
 llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *BaseTy) {
@@ -521,6 +493,42 @@ llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *Ba
     }
     } // namespace
 
+DenseMap<DIType *, SmallVector<DIType *, 4> *>*
+DiagnosticNameGenerator::getDITypeUsers() {
+  if (!M)
+    return nullptr;
+  // check if already populated to avoid redoing work
+  if (DITypeUsers.size() > 0) return &DITypeUsers;
+
+  DIF.processModule(*M);
+  for (auto User : DIF.types()) {
+    if (auto Comp = dyn_cast<DICompositeType>(User)) {
+      for (auto Elem : Comp->getElements()) {
+        if (!isa_and_nonnull<DIType>(Elem))
+          continue;
+        // Skipping derived fluff types not only saves memory and shortens the
+        // chain to traverse, but it also makes the length of the use chain
+        // predictable. This lets us cap the number of uses to traverse.
+        auto RealElem = trimNonPointerDerivedTypes(cast<DIType>(Elem));
+        if (!DITypeUsers.count(RealElem)) {
+          DITypeUsers.insert(
+              std::make_pair(RealElem, new SmallVector<DIType *, 4>));
+        }
+        DITypeUsers.find(RealElem)->getSecond()->push_back(cast<DIType>(User));
+      }
+    } else if (auto Derived = dyn_cast<DIDerivedType>(User)) {
+      auto Base = trimNonPointerDerivedTypes(Derived->getBaseType());
+      if (!Base) continue;
+      if (!DITypeUsers.count(Base)) {
+        DITypeUsers.insert(
+            std::make_pair(Base, new SmallVector<DIType *, 4>));
+      }
+      DITypeUsers.find(Base)->getSecond()->push_back(cast<DIType>(User));
+    }
+  }
+  return &DITypeUsers;
+}
+
   TypeCompareResult DiagnosticNameGenerator::compareValueTypeAndDebugType(const Type *Ty, const DIType *DITy) {
     ++NumTypeCompare;
     if (!DITy) return NoMatch;
@@ -716,7 +724,15 @@ std::pair<TypeCompareResult, uint32_t> DiagnosticNameGenerator::isPointerChainTo
       }
       case dwarf::DW_TAG_union_type: {
         DLOG("union: " << *T);
-        llvm_unreachable("union type in fragment bit offset");
+        if (Offset == 0)
+          for (auto E : elements) {
+            DLOG("union elem: " << *E);
+            if (auto E2 = dyn_cast<DIType>(E))
+              *FinalType = E2; // take a guess and let downstream handle it
+          }
+        *FinalType = nullptr;
+        return "";
+        //llvm_unreachable("union type in fragment bit offset");
       }
       default:
         for (auto E : Comp->getElements()) {
@@ -950,15 +966,17 @@ namespace llvm {
       if (!compareValueTypeAndDebugType(V->getType(), *FinalType)) {
         LLVM_DEBUG(errs() << "mismatched types1 for " << *V << "\n");
         LLVM_DEBUG(errs() << "type: " << *V->getType() << "\n");
-        LLVM_DEBUG(errs() << "dbg type: " << **FinalType << "\n");
+        if (*FinalType)
+          LLVM_DEBUG(errs() << "dbg type: " << **FinalType << "\n");
+        else DLOG("finaltype null");
         DLOG("VI: " << *VI);
         DLOG("Val: " << *Val);
         DLOG("scope: " << *Val->getScope());
         if (auto I = dyn_cast<Instruction>(V)) {
           DLOG("BB: " << *I->getParent());
         }
-        printDbgType(*FinalType);
-        printValueType(V->getType());
+        LLVM_DEBUG(printDbgType(*FinalType));
+        LLVM_DEBUG(printValueType(V->getType()));
         *FinalType = nullptr;
         //llvm_unreachable("mismatched types1");
       }
@@ -1693,8 +1711,9 @@ namespace llvm {
         *FinalType = nullptr;
         return name;
       }
-      auto it = DITypeUsers.find(T);
-      if (it != DITypeUsers.end()) {
+      auto UsersMap = getDITypeUsers();
+      auto it = UsersMap->find(T);
+      if (it != UsersMap->end()) {
         for (auto User : *it->getSecond()) {
           Users.push_back(User);
         }
@@ -1728,8 +1747,8 @@ namespace llvm {
         Users.clear();
         for (auto User : PrevUsers) { // types of BC and OP can differ several
                                       // nesting levels
-          auto it = DITypeUsers.find(User);
-          if (it != DITypeUsers.end()) {
+          auto it = UsersMap->find(User);
+          if (it != UsersMap->end()) {
             for (auto NextUser : *it->getSecond()) {
               if (NextUser->getTag() == dwarf::DW_TAG_structure_type) {
                 auto Comp = cast<DICompositeType>(NextUser);
