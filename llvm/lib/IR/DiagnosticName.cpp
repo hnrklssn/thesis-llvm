@@ -73,6 +73,12 @@ STATISTIC(NumBitcastNarrowingSuccesses,
 STATISTIC(NumTypeCalibrate, "Number of calls to calibrateDebugType");
 STATISTIC(NumTypeCompare, "Number of calls to compareValueTypeAndDebugType");
 STATISTIC(NumTypeCompareInternal, "Number of calls to compareValueTypeAndDebugTypeInternal");
+STATISTIC(NumConstructed,
+          "Number of instances of DiagnosticNameGenerator constructed");
+STATISTIC(NumConstructedWMetadata,
+          "Number of instances of DiagnosticNameGenerator constructed with metadata");
+STATISTIC(NumDITypeUsers,
+          "Number of times DITypeUsers was constructed in DiagnosticNameGenerator");
 
 namespace llvm {
 
@@ -183,6 +189,7 @@ llvm::DiagnosticNameGenerator llvm::DiagnosticNameGenerator::create(Module *M) {
   if (!NamedMD) return DiagnosticNameGenerator(nullptr, nullptr);
 
   if (auto CU = dyn_cast<DICompileUnit>(NamedMD->getOperand(0))) {
+    NumConstructedWMetadata++;
     return DiagnosticNameGenerator(
         M, new DIBuilder(*M, /*AllowUnresolved*/ true, CU));
   }
@@ -190,6 +197,7 @@ llvm::DiagnosticNameGenerator llvm::DiagnosticNameGenerator::create(Module *M) {
 }
 llvm::DiagnosticNameGenerator::DiagnosticNameGenerator(Module *M, DIBuilder *B)
     : M(M), Builder(B) {
+  NumConstructed++;
 }
 
 llvm::DIDerivedType *llvm::DiagnosticNameGenerator::createPointerType(DIType *BaseTy) {
@@ -500,6 +508,7 @@ DiagnosticNameGenerator::getDITypeUsers() {
   // check if already populated to avoid redoing work
   if (DITypeUsers.size() > 0) return &DITypeUsers;
 
+  NumDITypeUsers++;
   DIF.processModule(*M);
   for (auto User : DIF.types()) {
     if (auto Comp = dyn_cast<DICompositeType>(User)) {
@@ -1902,7 +1911,10 @@ namespace llvm {
       return "{" + Name + "}";
     }
     if (auto CFp = dyn_cast<ConstantFP>(C)) {
-      return std::to_string(CFp->getValueAPF().convertToDouble());
+      std::string Name;
+      raw_string_ostream SS(Name);
+      CFp->getValueAPF().print(SS);
+      return Name;
     }
     if (auto CI = dyn_cast<ConstantInt>(C)) {
       if (CI->isNegative()) return std::to_string(CI->getSExtValue());
