@@ -169,101 +169,18 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key,
   if (auto *F = dyn_cast<Function>(V)) {
     if (DISubprogram *SP = F->getSubprogram())
       Loc = SP;
-  }
-  else if (auto *I = dyn_cast<Instruction>(V))
+  } else if (auto *I = dyn_cast<Instruction>(V))
     Loc = I->getDebugLoc();
 
   // Only include names that correspond to user variables.  FIXME: We should use
   // debug info if available to get the name of the user variable.
-  if (isa<llvm::Argument>(V) || isa<GlobalValue>(V)) {
+  if (isa<llvm::Argument>(V) || isa<GlobalValue>(V))
     Val = std::string(GlobalValue::dropLLVMManglingEscape(V->getName()));
-    Val = Val + " (1)";
-  } else if (isa<Constant>(V)) {
+  else if (isa<Constant>(V)) {
     raw_string_ostream OS(Val);
     V->printAsOperand(OS, /*PrintType=*/false);
-    Val = Val + " (2)";
-  } else if (auto *I = dyn_cast<CallInst>(V)) {
-    if (auto *F = I->getCalledFunction()) {
-      LLVM_DEBUG(errs() << "\033[1;36m our function name: " << F->getName() << "\n\n");
-		  LLVM_DEBUG(errs() << "\033[0m\n");
-	    Val = F->getName().str();
-      Val = Val + " (3)";
-	  } else if(I->hasName()) {
-      LLVM_DEBUG(errs() << "\033[1;35m our value name: " << I->getName() << "\n\n");
-		  LLVM_DEBUG(errs() << "\033[0m\n");
-	    Val = I->getName().str();
-      Val = Val + " (4)";
-	  } else {
-		Val = "value without name (5)";
-	  }
-  } else if (auto *I = dyn_cast<Instruction>(V)) {
-    if (I->hasMetadata()) {
-      std::string debug_info;
-      raw_string_ostream ss(debug_info);
-      // ss << "'";
-      SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
-      I->getAllMetadata(MDs);
-      for (auto &MD : MDs) {
-        if (MDNode *N = MD.second) { // många MDTuple, vad innebär det?
-          N->printAsOperand(ss, I->getModule());
-          // ss << "\n";
-          for (auto &OP : N->operands()) {
-            ss << "debug info op ";
-            OP->print(ss, I->getModule(), false);
-            // ss << "\n";
-          }
-        }
-      }
-      // ss << "'";
-      ss << " opcodename: " << I->getOpcodeName()
-         << "  valuename: " << I->getName()
-         << " (6)";
-      Val = ss.str();
-    } else {
-      Val = I->getOpcodeName();
-      Val = Val + " (7)";
-    }
-  } else {
-    Val = V->getName().str();
-    Val = Val + " (8)";
-  }
-
-  //DiagnosticNameGenerator DNG = DiagnosticNameGenerator::create(V->getModule)
-  //Val = Val + " [" + DNG.getOriginalName(V) + "]";
-  /*} else if (auto *I = dyn_cast<Instruction>(V)) {
-    if (I->hasMetadata()) {
-	    SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
-	    I->getAllMetadata(MDs);
-	    for (auto &MD : MDs) {
-		    if (DINode *N = dyn_cast<DINode>(MD.second)) { // många MDTuple, vad innebär det?
-		    errs() << "\033[1;31m our output: \n\n";
-			    N->printAsOperand(errs(), I->getModule());
-			    errs() << "\n";
-			    for (auto &OP : N->operands()) {
-				    errs() << "\t debug info op ";
-				    OP->print(errs(), I->getModule(), false);
-				    errs() << "\n";
-			    }
-		    errs() << "\033[0m\n";
-		    } else if (DIExpression *N = dyn_cast<DIExpression>(MD.second)) {
-		    errs() << "\033[0;33m our output: \n\n";
-			    N->printAsOperand(errs(), I->getModule());
-			    errs() << "\n";
-			    for (auto &OP : N->operands()) {
-				    errs() << "\t debug info op ";
-				    OP->print(errs(), I->getModule(), false);
-				    errs() << "\n";
-			    }
-		    errs() << "\033[0m\n";
-		    }
-	    }
-	    Val = "has_metadata_lol";
-    } else {
-      Val = I->getOpcodeName();
-    }
-  } else {
-      Val = "asdf no name";
-    }*/
+  } else if (auto *I = dyn_cast<Instruction>(V))
+    Val = I->getOpcodeName();
 }
 
 DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key, const Type *T)
