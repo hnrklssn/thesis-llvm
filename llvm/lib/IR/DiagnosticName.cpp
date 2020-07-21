@@ -1727,8 +1727,6 @@ namespace llvm {
           Users.push_back(User);
         }
       }
-      // TODO: cap number of iterations to nesting distance if more performance
-      // is needed
       *FinalType = nullptr;
       unsigned Depth = 0;
       while (!Users.empty() && Depth++ <= NestingDepth) {
