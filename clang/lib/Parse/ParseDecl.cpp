@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/AST/ASTContext.h"
@@ -2124,11 +2125,13 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
   SmallVector<Decl *, 8> DeclsInGroup;
   Decl *FirstDecl = ParseDeclarationAfterDeclaratorAndAttributes(
       D, ParsedTemplateInfo(), FRI);
-  if (LateParsedAttrs.size() > 0)
+  if (LateParsedAttrs.size() > 0) {
     ParseLexedAttributeList(LateParsedAttrs, FirstDecl, true, false);
+  }
   D.complete(FirstDecl);
-  if (FirstDecl)
+  if (FirstDecl) {
     DeclsInGroup.push_back(FirstDecl);
+  }
 
   bool ExpectSemi = Context != DeclaratorContext::ForContext;
 

@@ -15,15 +15,17 @@
 #define LLVM_IR_OPTIMIZATIONDIAGNOSTICINFO_H
 
 #include "llvm/ADT/Optional.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
 
 namespace llvm {
 class DebugLoc;
-class Loop;
 class Pass;
 class Twine;
 class Value;
@@ -36,8 +38,8 @@ class Value;
 /// enabled in the LLVM context.
 class OptimizationRemarkEmitter {
 public:
-  OptimizationRemarkEmitter(const Function *F, BlockFrequencyInfo *BFI)
-      : F(F), BFI(BFI) {}
+  OptimizationRemarkEmitter(const Function *F, LoopInfo *LI, BlockFrequencyInfo *BFI)
+    : F(F), LI(LI), BFI(BFI) {}
 
   /// This variant can be used to generate ORE on demand (without the
   /// analysis pass).
@@ -53,11 +55,12 @@ public:
   OptimizationRemarkEmitter(const Function *F);
 
   OptimizationRemarkEmitter(OptimizationRemarkEmitter &&Arg)
-      : F(Arg.F), BFI(Arg.BFI) {}
+    : F(Arg.F), LI(Arg.LI), BFI(Arg.BFI) {}
 
   OptimizationRemarkEmitter &operator=(OptimizationRemarkEmitter &&RHS) {
     F = RHS.F;
     BFI = RHS.BFI;
+    LI = RHS.LI;
     return *this;
   }
 
@@ -78,7 +81,8 @@ public:
     // for the calling pass since that requires actually building the remark.
 
     if (F->getContext().getRemarkStreamer() ||
-        F->getContext().getDiagHandlerPtr()->isAnyRemarkEnabled()) {
+        F->getContext().getDiagHandlerPtr()->isAnyRemarkEnabled() ||
+        isAnyRemarkEnabledByMetadata()) {
       auto R = RemarkBuilder();
       emit((DiagnosticInfoOptimizationBase &)R);
     }
@@ -93,15 +97,18 @@ public:
   /// detected by the user.
   bool allowExtraAnalysis(StringRef PassName) const {
     return (F->getContext().getRemarkStreamer() ||
-            F->getContext().getDiagHandlerPtr()->isAnyRemarkEnabled(PassName));
+            F->getContext().getDiagHandlerPtr()->isAnyRemarkEnabled(PassName) ||
+            isAnyRemarkEnabledByMetadata(PassName));
   }
 
 private:
   const Function *F;
 
+  LoopInfo *LI;
   BlockFrequencyInfo *BFI;
 
-  /// If we generate BFI on demand, we need to free it when ORE is freed.
+  /// If we generate LI and BFI on demand, we need to free it when ORE is freed.
+  std::unique_ptr<LoopInfo> OwnedLI;
   std::unique_ptr<BlockFrequencyInfo> OwnedBFI;
 
   /// Compute hotness from IR value (currently assumed to be a block) if PGO is
@@ -110,6 +117,20 @@ private:
 
   /// Similar but use value from \p OptDiag and update hotness there.
   void computeHotness(DiagnosticInfoIROptimization &OptDiag);
+
+  /// Compute loop data from IR value (currently assumed to be a block)
+  MDNode *computeLoopID(const Value *V) const;
+
+  /// Similar but use value from \p OptDiag and update loop there.
+  void computeLoopID(DiagnosticInfoIROptimization &OptDiag);
+
+  /// Check if there is any locally activated metadata in this function or module
+  bool isAnyRemarkEnabledByMetadata() const;
+
+  /// Check if there is any locally activated metadata in this function or module for this pass
+  bool isAnyRemarkEnabledByMetadata(StringRef PassName) const;
+
+  void getAllRemarkMetadata(SmallVectorImpl<MDNode*> &MDs) const;
 
   /// Only allow verbose messages if we know we're filtering by hotness
   /// (BFI is only set in this case).

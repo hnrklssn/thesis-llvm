@@ -11,18 +11,31 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/ASTContext.h"
+#include "clang/Basic/DiagnosticIDs.h"
+#include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/PragmaKinds.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/Basic/TokenKinds.h"
+#include "clang/Lex/Pragma.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Parse/LoopHint.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
+#include "clang/Sema/ParsedAttr.h"
+#include "clang/Sema/RemarkHint.h"
 #include "clang/Sema/Scope.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/raw_ostream.h"
+#include <memory>
 using namespace clang;
 
 namespace {
+
+struct PragmaRemarkHandler : public PragmaHandler {
+  PragmaRemarkHandler(const char *name) : PragmaHandler(name) {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer, Token &FirstToken) override;
+};
 
 struct PragmaAlignHandler : public PragmaHandler {
   explicit PragmaAlignHandler() : PragmaHandler("align") {}
@@ -382,6 +395,15 @@ void Parser::initializePragmaHandlers() {
   AttributePragmaHandler =
       std::make_unique<PragmaAttributeHandler>(AttrFactory);
   PP.AddPragmaHandler("clang", AttributePragmaHandler.get());
+
+  RemarkPragmaHandler = std::make_unique<PragmaRemarkHandler>("remark");
+  PP.AddPragmaHandler("clang", RemarkPragmaHandler.get());
+
+  RemarkMissedPragmaHandler = std::make_unique<PragmaRemarkHandler>("remark_missed");
+  PP.AddPragmaHandler("clang", RemarkMissedPragmaHandler.get());
+
+  RemarkAnalysisPragmaHandler = std::make_unique<PragmaRemarkHandler>("remark_analysis");
+  PP.AddPragmaHandler("clang", RemarkAnalysisPragmaHandler.get());
 }
 
 void Parser::resetPragmaHandlers() {
@@ -487,6 +509,15 @@ void Parser::resetPragmaHandlers() {
 
   PP.RemovePragmaHandler("clang", AttributePragmaHandler.get());
   AttributePragmaHandler.reset();
+
+  PP.RemovePragmaHandler("clang", RemarkPragmaHandler.get());
+  RemarkPragmaHandler.reset();
+
+  PP.RemovePragmaHandler("clang", RemarkMissedPragmaHandler.get());
+  RemarkMissedPragmaHandler.reset();
+
+  PP.RemovePragmaHandler("clang", RemarkAnalysisPragmaHandler.get());
+  RemarkAnalysisPragmaHandler.reset();
 }
 
 /// Handle the annotation token produced for #pragma unused(...)
@@ -998,6 +1029,181 @@ bool Parser::HandlePragmaMSInitSeg(StringRef PragmaName,
 }
 
 namespace {
+struct PragmaRemarkInfo {
+  Token PragmaName;
+  Token Option;
+  ArrayRef<Token> Toks;
+};
+} // namespace
+
+static bool ParseRemarkValue(Preprocessor &PP, Token &Tok, PragmaRemarkInfo &Info) {
+  SmallVector<Token, 1> ValueList;
+  if (!Tok.is(tok::l_paren)) {
+    PP.Diag(Tok, diag::err_expected_lparen_after) << Info.Option.getIdentifierInfo();
+    return false;
+  }
+  PP.Lex(Tok);
+  bool ExpectingComma = false;
+  while (Tok.isNot(tok::eod)) {
+    if (Tok.is(tok::r_paren)) {
+      break;
+    }
+    if (ExpectingComma && Tok.isNot(tok::comma)) {
+      PP.Diag(Tok, diag::err_expected_either) << tok::comma << tok::r_paren;
+      return false;
+    }
+    if (!ExpectingComma && Tok.isNot(tok::string_literal)) {
+      PP.Diag(Tok, diag::err_expected_string_literal)
+        << 0 << "#pragma clang remark" << SourceRange(Tok.getLocation(), Tok.getEndLoc());
+      return false;
+    }
+    ExpectingComma = !ExpectingComma;
+    ValueList.push_back(Tok); // keep commas, otherwise string literals will be concatenated in parsing
+    PP.Lex(Tok);
+  }
+  if (Tok.isNot(tok::r_paren)) {
+    PP.Diag(Tok, diag::err_expected) << tok::r_paren;
+    return false;
+  }
+  PP.Lex(Tok);
+  Token EOFTok;
+  EOFTok.startToken();
+  EOFTok.setKind(tok::eof);
+  EOFTok.setLocation(Tok.getLocation());
+  ValueList.push_back(EOFTok); // Terminates expression for parsing.
+
+  Info.Toks = llvm::makeArrayRef(ValueList).copy(PP.getPreprocessorAllocator());
+  return true;
+}
+
+void PragmaRemarkHandler::HandlePragma(Preprocessor &PP,
+                                         PragmaIntroducer Introducer,
+                                         Token &Tok) {
+  Token PragmaName = Tok;
+  SmallVector<Token, 1> TokenList;
+  PP.Lex(Tok);
+  if (Tok.isNot(tok::identifier)) {
+    PP.Diag(Tok, diag::err_pragma_remark_invalid_option)
+        /*missing option*/ << 1
+      /*expected conf, file, funct or loop*/ << 2;
+    return;
+  }
+
+  Token Option = Tok;
+  PP.Lex(Tok);
+
+  auto *Info = new (PP.getPreprocessorAllocator()) PragmaRemarkInfo;
+  Info->Option = Option;
+  Info->PragmaName = PragmaName;
+  if (!ParseRemarkValue(PP, Tok, *Info)) {
+    return;
+  }
+
+  Token RemarkTok;
+  RemarkTok.startToken();
+  RemarkTok.setKind(tok::annot_pragma_remark);
+  RemarkTok.setLocation(PragmaName.getLocation());
+  RemarkTok.setAnnotationEndLoc(Tok.getLocation());
+  RemarkTok.setAnnotationValue(static_cast<void *>(Info));
+  TokenList.push_back(RemarkTok);
+
+  if (Tok.isNot(tok::eod)) {
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
+        << "clang remark";
+    return;
+  }
+  auto TokenArray = std::make_unique<Token[]>(TokenList.size());
+  std::copy(TokenList.begin(), TokenList.end(), TokenArray.get());
+  PP.EnterTokenStream(std::move(TokenArray), TokenList.size(),
+                      /*DisableMacroExpansion=*/false,
+                        /*IsReinject=*/false);
+}
+
+bool Parser::HandlePragmaRemark(RemarkHint &Hint) {
+  assert(Tok.is(tok::annot_pragma_remark));
+  PragmaRemarkInfo *Info =
+      static_cast<PragmaRemarkInfo *>(Tok.getAnnotationValue());
+
+  IdentifierInfo *PragmaNameInfo = Info->PragmaName.getIdentifierInfo();
+  Hint.PragmaNameLoc = IdentifierLoc::create(
+      Actions.Context, Info->PragmaName.getLocation(), PragmaNameInfo);
+
+  IdentifierInfo *OptionInfo = Info->Option.getIdentifierInfo();
+  Hint.OptionLoc = IdentifierLoc::create(
+      Actions.Context, Info->Option.getLocation(), OptionInfo);
+
+  llvm::ArrayRef<Token> Toks = Info->Toks;
+  PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/false,
+                      /*IsReinject=*/false);
+
+  ConsumeAnnotationToken();
+
+  while (isTokenStringLiteral()) {
+    ExprResult Result = ParseStringLiteralExpression();
+    assert(!Result.isInvalid() && "Invalid string literal in remark pragma");
+    Hint.ValueExprs.push_back(Result.get());
+    if (Tok.is(tok::comma)) ConsumeToken();
+  }
+
+  // Tokens following an error in an ill-formed constant expression will
+  // remain in the token stream and must be removed.
+  if (Tok.isNot(tok::eof)) {
+    Diag(Tok, diag::warn_pragma_extra_tokens_at_eol) << "clang remark";
+    while (Tok.isNot(tok::eof))
+      ConsumeAnyToken();
+    return false;
+  }
+  ConsumeToken(); // Consume the constant expression eof terminator.
+  Hint.Range = SourceRange(Info->PragmaName.getLocation(),
+                           Info->Toks.back().getLocation());
+  return true;
+}
+
+Parser::DeclGroupPtrTy
+Parser::ParsePragmaRemarkHint(AccessSpecifier AS,
+                              ParsedAttributesWithRange &Attrs,
+                              DeclSpec::TST TagType, Decl *Tag) {
+  RemarkHint Hint;
+  if (!HandlePragmaRemark(Hint)) return nullptr;
+
+  SmallVector<ArgsUnion, 2> ArgHints;
+  ParsedAttributesWithRange TempAttrs(AttrFactory);
+
+  ArgHints.push_back(Hint.OptionLoc);
+  ArgHints.append(Hint.ValueExprs.begin(), Hint.ValueExprs.end());
+
+  TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                     Hint.PragmaNameLoc->Loc, ArgHints.begin(), ArgHints.size(),
+                     ParsedAttr::AS_Pragma);
+
+  StringRef OptionStr = Hint.OptionLoc->Ident->getName();
+  if (OptionStr.equals("file") || OptionStr.equals("conf")) {
+    RemarkAttr *Attr = handleRemarkAttr(Actions, TempAttrs.front());
+    Actions.ActOnPragmaModuleRemark(Attr);
+    return nullptr;
+  } else if (!OptionStr.equals("funct")) {
+    Diag(Hint.OptionLoc->Loc, diag::err_pragma_remark_invalid_option)
+      /*invalid option*/ << 0
+      /*expected conf, file or funct*/ << 0
+      /*actual option*/ << OptionStr;
+    return nullptr;
+  }
+
+  Attrs.takeAllFrom(TempAttrs);
+  llvm::SmallVector<Decl *, 4> Decls;
+  DeclGroupPtrTy Ptr;
+  // Here we expect to see some function declaration.
+  if (AS == AS_none) {
+    assert(TagType == DeclSpec::TST_unspecified);
+    MaybeParseCXX11Attributes(Attrs);
+    ParsingDeclSpec PDS(*this);
+    return ParseExternalDeclaration(Attrs, &PDS);
+  } else {
+    return ParseCXXClassMemberDeclarationWithPragmas(AS, Attrs, TagType, Tag);
+  }
+}
+
+namespace {
 struct PragmaLoopHintInfo {
   Token PragmaName;
   Token Option;
@@ -1047,29 +1253,29 @@ bool Parser::HandlePragmaLoopHint(LoopHint &Hint) {
     return true;
   }
 
-  // The constant expression is always followed by an eof token, which increases
-  // the TokSize by 1.
-  assert(!Toks.empty() &&
-         "PragmaLoopHintInfo::Toks must contain at least one token.");
+    // The constant expression is always followed by an eof token, which
+    // increases the TokSize by 1.
+    assert(!Toks.empty() &&
+           "PragmaLoopHintInfo::Toks must contain at least one token.");
 
-  // If no option is specified the argument is assumed to be a constant expr.
-  bool OptionUnroll = false;
-  bool OptionUnrollAndJam = false;
-  bool OptionDistribute = false;
-  bool OptionPipelineDisabled = false;
-  bool StateOption = false;
-  if (OptionInfo) { // Pragma Unroll does not specify an option.
-    OptionUnroll = OptionInfo->isStr("unroll");
-    OptionUnrollAndJam = OptionInfo->isStr("unroll_and_jam");
-    OptionDistribute = OptionInfo->isStr("distribute");
-    OptionPipelineDisabled = OptionInfo->isStr("pipeline");
-    StateOption = llvm::StringSwitch<bool>(OptionInfo->getName())
-                      .Case("vectorize", true)
-                      .Case("interleave", true)
-                      .Case("vectorize_predicate", true)
-                      .Default(false) ||
-                  OptionUnroll || OptionUnrollAndJam || OptionDistribute ||
-                  OptionPipelineDisabled;
+    // If no option is specified the argument is assumed to be a constant expr.
+    bool OptionUnroll = false;
+    bool OptionUnrollAndJam = false;
+    bool OptionDistribute = false;
+    bool OptionPipelineDisabled = false;
+    bool StateOption = false;
+    if (OptionInfo) { // Pragma Unroll does not specify an option.
+      OptionUnroll = OptionInfo->isStr("unroll");
+      OptionUnrollAndJam = OptionInfo->isStr("unroll_and_jam");
+      OptionDistribute = OptionInfo->isStr("distribute");
+      OptionPipelineDisabled = OptionInfo->isStr("pipeline");
+      StateOption = llvm::StringSwitch<bool>(OptionInfo->getName())
+                        .Case("vectorize", true)
+                        .Case("interleave", true)
+                        .Case("vectorize_predicate", true)
+                        .Default(false) ||
+                    OptionUnroll || OptionUnrollAndJam || OptionDistribute ||
+                    OptionPipelineDisabled;
   }
 
   bool AssumeSafetyArg = !OptionUnroll && !OptionUnrollAndJam &&

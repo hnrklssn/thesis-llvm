@@ -190,9 +190,10 @@ static bool isDiagnosticEnabled(const DiagnosticInfo &DI) {
   //
   // Also noisy remarks are only enabled if we have hotness information to sort
   // them.
-  if (auto *Remark = dyn_cast<DiagnosticInfoOptimizationBase>(&DI))
+  if (auto *Remark = dyn_cast<DiagnosticInfoOptimizationBase>(&DI)) {
     return Remark->isEnabled() &&
            (!Remark->isVerbose() || Remark->getHotness());
+  }
 
   return true;
 }

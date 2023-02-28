@@ -36,6 +36,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/SanitizerStats.h"
@@ -4363,6 +4364,7 @@ private:
                                   const AutoVarEmission &emission);
 
   void AddObjCARCExceptionMetadata(llvm::Instruction *Inst);
+  void AddRemarkMetadata(llvm::Function *Fn, const RemarkAttr *RemarkAttr);
 
   llvm::Value *GetValueForARMHint(unsigned BuiltinID);
   llvm::Value *EmitX86CpuIs(const CallExpr *E);

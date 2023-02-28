@@ -267,10 +267,26 @@ namespace clang {
       Ctx.setDiagnosticHandler(std::make_unique<ClangDiagnosticHandler>(
         CodeGenOpts, this));
 
+      StringRef OptRecordFormat(CodeGenOpts.OptRecordFormat);
+      StringRef OptRecordFilePath(CodeGenOpts.OptRecordFile);
+      // Compiler flags overrule pragmas
+      if (OptRecordFormat.empty() || OptRecordFilePath.empty()) {
+        for (auto Attr : Context->getModuleRemarkAttrs()) {
+          auto RAttr = cast<RemarkAttr>(Attr);
+          if (RAttr->getOption() != RemarkAttr::Conf)
+            continue;
+          auto Params = RAttr->values_begin();
+          if (OptRecordFormat.empty())
+            OptRecordFormat = Params[0];
+          if (OptRecordFilePath.empty() && RAttr->values_size() > 1)
+            OptRecordFilePath = Params[1];
+        }
+      }
+
       Expected<std::unique_ptr<llvm::ToolOutputFile>> OptRecordFileOrErr =
-          setupOptimizationRemarks(Ctx, CodeGenOpts.OptRecordFile,
+          setupOptimizationRemarks(Ctx, OptRecordFilePath,
                                    CodeGenOpts.OptRecordPasses,
-                                   CodeGenOpts.OptRecordFormat,
+                                   OptRecordFormat,
                                    CodeGenOpts.DiagnosticsWithHotness,
                                    CodeGenOpts.DiagnosticsHotnessThreshold);
 
@@ -279,7 +295,7 @@ namespace clang {
             std::move(E),
             [&](const RemarkSetupFileError &E) {
               Diags.Report(diag::err_cannot_open_file)
-                  << CodeGenOpts.OptRecordFile << E.message();
+                  << OptRecordFilePath << E.message();
             },
             [&](const RemarkSetupPatternError &E) {
               Diags.Report(diag::err_drv_optimization_remark_pattern)
@@ -287,7 +303,7 @@ namespace clang {
             },
             [&](const RemarkSetupFormatError &E) {
               Diags.Report(diag::err_drv_optimization_remark_format)
-                  << CodeGenOpts.OptRecordFormat;
+                  << OptRecordFormat;
             });
         return;
       }
@@ -684,6 +700,11 @@ void BackendConsumer::OptimizationRemarkHandler(
     if (CodeGenOpts.OptimizationRemarkPattern &&
         CodeGenOpts.OptimizationRemarkPattern->match(D.getPassName()))
       EmitOptimizationMessage(D, diag::remark_fe_backend_optimization_remark);
+    else if (auto DIIO = dyn_cast<DiagnosticInfoIROptimization>(&D)) {
+      if (DIIO->isOptRemarkEnabledByMetadata()) {
+        EmitOptimizationMessage(D, diag::remark_fe_backend_optimization_remark);
+      }
+    }
   } else if (D.isMissed()) {
     // Missed optimization remarks are active only if the -Rpass-missed
     // flag has a regular expression that matches the name of the pass
@@ -692,6 +713,12 @@ void BackendConsumer::OptimizationRemarkHandler(
         CodeGenOpts.OptimizationRemarkMissedPattern->match(D.getPassName()))
       EmitOptimizationMessage(
           D, diag::remark_fe_backend_optimization_remark_missed);
+    else if (auto DIIO = dyn_cast<DiagnosticInfoIROptimization>(&D)) {
+      if (DIIO->isOptRemarkEnabledByMetadata()) {
+        EmitOptimizationMessage(
+            D, diag::remark_fe_backend_optimization_remark_missed);
+      }
+    }
   } else {
     assert(D.isAnalysis() && "Unknown remark type");
 
@@ -704,6 +731,12 @@ void BackendConsumer::OptimizationRemarkHandler(
          CodeGenOpts.OptimizationRemarkAnalysisPattern->match(D.getPassName())))
       EmitOptimizationMessage(
           D, diag::remark_fe_backend_optimization_remark_analysis);
+    else if (auto DIIO = dyn_cast<DiagnosticInfoIROptimization>(&D)) {
+      if (DIIO->isOptRemarkEnabledByMetadata()) {
+        EmitOptimizationMessage(
+            D, diag::remark_fe_backend_optimization_remark_analysis);
+      }
+    }
   }
 }
 

@@ -993,3 +993,8 @@ void Sema::PopPragmaVisibility(bool IsNamespaceEnd, SourceLocation EndLoc) {
   if (Stack->empty())
     FreeVisContext();
 }
+
+void Sema::ActOnPragmaModuleRemark(RemarkAttr *Attr) {
+  assert(Attr->getOption() == RemarkAttr::File || Attr->getOption() == RemarkAttr::Conf);
+  Context.addModuleRemarkAttr(Attr);
+}

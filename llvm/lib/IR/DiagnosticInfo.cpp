@@ -13,6 +13,7 @@
 
 #include "llvm/IR/DiagnosticInfo.h"
 #include "LLVMContextImpl.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator_range.h"
@@ -119,7 +120,7 @@ DiagnosticLocation::DiagnosticLocation(const DebugLoc &DL) {
 DiagnosticLocation::DiagnosticLocation(const DISubprogram *SP) {
   if (!SP)
     return;
-  
+
   File = SP->getFile();
   Line = SP->getScopeLine();
   Column = 0;
@@ -250,6 +251,85 @@ static const BasicBlock &getFirstFunctionBlock(const Function *Func) {
   return Func->front();
 }
 
+static bool metadataEnablesOptRemark(StringRef PassName, MDNode *MD,
+                                     DiagnosticKind Kind) {
+  if (MD->getNumOperands() == 0)
+    return false;
+
+  if (auto MDS = dyn_cast<MDString>(MD->getOperand(0))) {
+    switch (Kind) {
+    case llvm::DK_OptimizationRemark:
+      if (!MDS->getString().equals("remark"))
+        return false;
+      break;
+    case llvm::DK_OptimizationRemarkMissed:
+      if (!MDS->getString().equals("remark_missed"))
+        return false;
+      break;
+    case llvm::DK_OptimizationRemarkAnalysis:
+      if (!MDS->getString().equals("remark_analysis"))
+        return false;
+      break;
+    default:
+      return false; // Metadata is not opt remark hint
+    }
+
+    for (auto &MDOp : MD->operands()) {
+      auto MDSOp = cast<MDString>(MDOp.get());
+      Regex Pattern(MDSOp->getString());
+      if (Pattern.isValid() && Pattern.match(PassName)) return true;
+    }
+  }
+
+  return false; // Metadata is not opt remark hint
+}
+
+bool DiagnosticInfoIROptimization::isOptRemarkEnabledByMetadata() const {
+  const Function &Func = getFunction();
+  const Value *CR = getCodeRegion();
+  StringRef PassName = getPassName();
+  DiagnosticKind Kind = (DiagnosticKind) getKind();
+
+  // Function level remark output
+  SmallVector<MDNode *, 0> RemarkMDs;
+  Func.getMetadata("llvm.remarks", RemarkMDs);
+  for (auto MD : RemarkMDs) {
+    if (metadataEnablesOptRemark(PassName, MD, Kind))
+      return true;
+  }
+
+  // Module level remark output
+  const Module *M = Func.getParent();
+  auto NamedMD = M->getNamedMetadata("llvm.remarks");
+  if (NamedMD)
+    for (auto MD : NamedMD->operands()) {
+      if (metadataEnablesOptRemark(PassName, MD, Kind))
+        return true;
+    }
+
+  // Loop level remark output
+  Optional<MDNode *> LR = getLoopID();
+  MDNode *LoopMD = nullptr;
+  if (LR.hasValue()) {
+    LoopMD = LR.getValue();
+  } else if (CR) { // Make a best effort attempt to get loop data from BB even if loop recognition fails
+    auto BB = cast<BasicBlock>(CR);
+    // instead of creating new named MD (llvm.remarks), it is attached to the loop ID along with everything
+    // else loop related
+    LoopMD = BB->getTerminator()->getMetadata("llvm.loop");
+  }
+  if (LoopMD) {
+    for (auto &MDOpt : LoopMD->operands()) {
+      if (auto MD = dyn_cast<MDNode>(MDOpt.get())) {
+        if (metadataEnablesOptRemark(PassName, MD, Kind))
+          return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 OptimizationRemark::OptimizationRemark(const char *PassName,
                                        StringRef RemarkName,
                                        const Function *Func)
@@ -260,7 +340,8 @@ OptimizationRemark::OptimizationRemark(const char *PassName,
 bool OptimizationRemark::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
-  return Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled(getPassName());
+  return Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled(getPassName()) ||
+         isOptRemarkEnabledByMetadata();
 }
 
 OptimizationRemarkMissed::OptimizationRemarkMissed(
@@ -281,7 +362,7 @@ OptimizationRemarkMissed::OptimizationRemarkMissed(const char *PassName,
 bool OptimizationRemarkMissed::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
-  return Ctx.getDiagHandlerPtr()->isMissedOptRemarkEnabled(getPassName());
+  return Ctx.getDiagHandlerPtr()->isMissedOptRemarkEnabled(getPassName()) || isOptRemarkEnabledByMetadata();
 }
 
 OptimizationRemarkAnalysis::OptimizationRemarkAnalysis(
@@ -310,7 +391,7 @@ bool OptimizationRemarkAnalysis::isEnabled() const {
   const Function &Fn = getFunction();
   LLVMContext &Ctx = Fn.getContext();
   return Ctx.getDiagHandlerPtr()->isAnalysisRemarkEnabled(getPassName()) ||
-         shouldAlwaysPrint();
+    shouldAlwaysPrint() || isOptRemarkEnabledByMetadata();
 }
 
 void DiagnosticInfoMIRParser::print(DiagnosticPrinter &DP) const {

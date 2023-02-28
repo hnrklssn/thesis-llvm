@@ -10763,3 +10763,7 @@ QualType ASTContext::getCorrespondingSignedFixedPointType(QualType Ty) const {
     llvm_unreachable("Unexpected unsigned fixed point type");
   }
 }
+
+void ASTContext::addModuleRemarkAttr(RemarkAttr *RemarkAttr) {
+  ModuleRemarks.push_back(RemarkAttr);
+}

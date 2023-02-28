@@ -13,8 +13,8 @@
 #ifndef LLVM_CLANG_PARSE_PARSER_H
 #define LLVM_CLANG_PARSE_PARSER_H
 
-#include "clang/AST/OpenMPClause.h"
 #include "clang/AST/Availability.h"
+#include "clang/AST/OpenMPClause.h"
 #include "clang/Basic/BitmaskEnum.h"
 #include "clang/Basic/OpenMPKinds.h"
 #include "clang/Basic/OperatorPrecedence.h"
@@ -22,6 +22,7 @@
 #include "clang/Lex/CodeCompletionHandler.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/RemarkHint.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Compiler.h"
@@ -200,6 +201,9 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> STDCCXLIMITHandler;
   std::unique_ptr<PragmaHandler> STDCUnknownHandler;
   std::unique_ptr<PragmaHandler> AttributePragmaHandler;
+  std::unique_ptr<PragmaHandler> RemarkPragmaHandler;
+  std::unique_ptr<PragmaHandler> RemarkMissedPragmaHandler;
+  std::unique_ptr<PragmaHandler> RemarkAnalysisPragmaHandler;
 
   std::unique_ptr<CommentHandler> CommentSemaHandler;
 
@@ -736,6 +740,8 @@ private:
       SourceLocation &AnyLoc, SourceLocation &LastMatchRuleEndLoc);
 
   void HandlePragmaAttribute();
+
+  bool HandlePragmaRemark(RemarkHint &Hint);
 
   /// GetLookAheadToken - This peeks ahead N tokens and returns that token
   /// without consuming any tokens.  LookAhead(0) returns 'Tok', LookAhead(1)
@@ -1972,11 +1978,13 @@ private:
   StmtResult ParseReturnStatement();
   StmtResult ParseAsmStatement(bool &msAsm);
   StmtResult ParseMicrosoftAsmStatement(SourceLocation AsmLoc);
-  StmtResult ParsePragmaLoopHint(StmtVector &Stmts,
-                                 ParsedStmtContext StmtCtx,
+  StmtResult ParsePragmaLoopHint(StmtVector &Stmts, ParsedStmtContext StmtCtx,
                                  SourceLocation *TrailingElseLoc,
                                  ParsedAttributesWithRange &Attrs);
-
+  StmtResult ParsePragmaRemarkHint(StmtVector &Stmts, ParsedStmtContext StmtCtx,
+                                 SourceLocation *TrailingElseLoc,
+                                 ParsedAttributesWithRange &Attrs);
+  DeclGroupPtrTy ParsePragmaRemarkHint(AccessSpecifier AS, ParsedAttributesWithRange &Attrs,                                       DeclSpec::TST TagType = DeclSpec::TST_unspecified, Decl *Tag = nullptr);
   /// Describes the behavior that should be taken for an __if_exists
   /// block.
   enum IfExistsBehavior {
@@ -3092,7 +3100,7 @@ private:
                                  unsigned ArgumentIndex) override;
   void CodeCompleteIncludedFile(llvm::StringRef Dir, bool IsAngled) override;
   void CodeCompleteNaturalLanguage() override;
-};
+                                             };
 
 }  // end namespace clang
 

@@ -15,6 +15,7 @@
 #define LLVM_CLANG_SEMA_SEMA_H
 
 #include "clang/AST/Attr.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/Availability.h"
 #include "clang/AST/ComparisonCategories.h"
 #include "clang/AST/DeclTemplate.h"
@@ -11619,6 +11620,9 @@ public:
     ConstructorDestructor,
     BuiltinFunction
   };
+
+  /// Saves module level remark pragmas (i.e. file and conf) for later reference
+  void ActOnPragmaModuleRemark(RemarkAttr *Attr);
 };
 
 /// RAII object that enters a new expression evaluation context.
